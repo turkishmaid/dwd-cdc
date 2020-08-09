@@ -1,3 +1,28 @@
+#
+#     My .gitignore
+#
+
+# IntelliJ IDEA project directory
+.idea/
+
+# from Python with love
+/*.egg-info/
+/.eggs
+.pytest.cache/
+.ipynb.checkpoints/
+
+# greetings from my Mac :)
+.DS_Store
+
+# some other local files not meant for GitHub publishing
+local/
+
+
+
+#
+#     GitHub generated .gitignore for Python projects
+#
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
