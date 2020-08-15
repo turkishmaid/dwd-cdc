@@ -9,6 +9,7 @@ Application level logging.
 import sys
 import logging
 from logging.handlers import RotatingFileHandler
+from time import perf_counter
 
 import dotfolder, mailgun
 
@@ -103,3 +104,28 @@ def shoot_mail(subject="von DWD with love"):
     subject = ( "ERROR - " if ERROR else "SUCCESS - " ) + subject
     mailgun.shoot_mail(subject, body)
 
+
+class Timer(object):
+    """
+    use like so:
+        with Timer() as t:
+            sleep(2)
+            print(t.read(raw=True))
+        print(t.read())
+    """
+    def __init__(self):
+        self.elapsed = None
+        pass
+    def __enter__(self):
+        self.start = perf_counter()
+        return self
+    def __exit__(self, type, value, traceback):
+        self.elapsed = perf_counter() - self.start
+    def reset(self):
+        self.start = perf_counter()
+    def read(self, raw=False):
+        if self.elapsed:
+            return self.elapsed if raw else "[%0.3f s]" % self.elapsed
+        else:
+            dt = perf_counter() - self.start
+            return dt if raw else "[%0.3f s]" % dt
