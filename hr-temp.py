@@ -17,16 +17,9 @@ Options:
   --skipdl          Dateien nicht herunterladen, wenn sie schon da sind (Testhilfe)
   --skiprm          Dateien nach dem Einarbeiten nicht löschen (Testhilfe)
 """
+# Created: 09.08.20
 
-"""
-Hourly Air Temperature 2m
-
-Created: 09.08.20
-"""
-
-import sys
-import os
-from time import time, perf_counter, process_time
+from time import perf_counter, process_time
 import json
 import tracemalloc
 import logging
