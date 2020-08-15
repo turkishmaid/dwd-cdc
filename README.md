@@ -15,10 +15,10 @@ This project is built for Jenkins (or cron) based usage.
 This means that the content of this repository will 
 periodically be executed from a Jenkins instance or via cron
 according to the following pattern:
-- clone repository from GutHub into local workspace or temp directory
+- clone repository from GitHub into local workspace or temp directory
 - execute sevral scripts programatically
-   - in the repo root folder, 
-    - leaving logs behind
+   - in the repo root folder 
+   - leaving logs behind
 - exit (and optionally remove workspace or temp directory)
 
 We thus develop for an ever refreshed git workspace in an
