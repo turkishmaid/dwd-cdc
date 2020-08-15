@@ -33,7 +33,7 @@ kann dort ein Abschnitt wie folgt manuell hinzugefügt werden:
 [mailgun]
 url = https://api.mailgun.net/v3/sandbox12345678901234567890123.mailgun.org/messages
 auth-key = key-8674f976bb0w8678a0ds874sjldao787
-from = luechenbresse <postmaster@sandbox12345678901234567890123.mailgun.org>
+from = dwd-cdc <postmaster@sandbox12345678901234567890123.mailgun.org>
 to = Sara Ziner <do.not.use@example.com>
 ```
 
