@@ -12,6 +12,9 @@ from logging.handlers import RotatingFileHandler
 
 import dotfolder, mailgun
 
+# set the following to true if mail should get an "[FAILURE] - " prefix
+ERROR = False
+
 _LOGGING_FMT = "%(asctime)s [%(levelname)s] %(message)s"
 
 # simple container for singleton data
@@ -79,7 +82,7 @@ def init_logging(collective: bool = False, console: bool = False, process: bool 
     logging.info(f"LogManager lebt. ({','.join(remark)})")
 
 
-def shoot_mail(subject="von luechenbresse with love"):
+def shoot_mail(subject="von DWD with love"):
     global _FILE_HANDLER
 
     # close current.log
@@ -97,5 +100,6 @@ def shoot_mail(subject="von luechenbresse with love"):
     body = _FILE_PATH.read_text()
     # logger.addHandler(_FILE_HANDLER) TODO not throw away but append after reading the contents
 
+    subject = ( "ERROR - " if ERROR else "SUCCESS - " ) + subject
     mailgun.shoot_mail(subject, body)
 

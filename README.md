@@ -24,5 +24,26 @@ according to the following pattern:
 We thus develop for an ever refreshed git workspace in an
 execution environment and not an installable PyPI module or so.
 
+### Mailgun-Anschluss (optional)
+
+Nachdem die Konfigurationsdatei `~/.dwd-cdc/dwd-cdc` angelegt ist, 
+kann dort ein Abschnitt wie folgt manuell hinzugefügt werden:
+
+```ini
+[mailgun]
+url = https://api.mailgun.net/v3/sandbox12345678901234567890123.mailgun.org/messages
+auth-key = key-8674f976bb0w8678a0ds874sjldao787
+from = luechenbresse <postmaster@sandbox12345678901234567890123.mailgun.org>
+to = Sara Ziner <do.not.use@example.com>
+```
+
+wenn diese Konfiguration vorhanden ist, wird nach jedem Programmlauf die Print- und Log-Ausgabe über den
+beschriebenen Mailgun-Account an die angegebene `to`-Adresse geschickt. Weitergehende Konfigurationsmöglichkeiten
+werden (vielleicht) später hinzugefügt.
+
+Ein kostenloser [mailgun](https://www.mailgun.com/) Account ("Flex Trial") ist für die Verwendung hier völlig
+ausreichend. Man muss allerdings die Empfängeradressen vorher als "authorized recipients" anmelden 
+und diese müssen es auch bestätigen.
+
 
  
