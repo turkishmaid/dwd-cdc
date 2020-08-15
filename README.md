@@ -37,7 +37,7 @@ from = dwd-cdc <postmaster@sandbox12345678901234567890123.mailgun.org>
 to = Sara Ziner <do.not.use@example.com>
 ```
 
-wenn diese Konfiguration vorhanden ist, wird nach jedem Programmlauf die Print- und Log-Ausgabe über den
+Wenn diese Konfiguration vorhanden ist, wird nach jedem Programmlauf die Print- und Log-Ausgabe über den
 beschriebenen Mailgun-Account an die angegebene `to`-Adresse geschickt. Weitergehende Konfigurationsmöglichkeiten
 werden (vielleicht) später hinzugefügt.
 
