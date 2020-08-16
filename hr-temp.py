@@ -19,7 +19,7 @@ Options:
 """
 # Created: 09.08.20
 
-from time import perf_counter, process_time
+from time import perf_counter, process_time, sleep
 import json
 import tracemalloc
 import logging
@@ -446,6 +446,7 @@ def process_dataset(kind: str) -> None:
     # for fnam in file_list[6:10]:
     for fnam in file_list:
         ProcessDataFile(ftp, fnam, verbose=True)
+        sleep(3)  # be nice: reduce load on server
     hurz = 17  # für Brechpunkt
 
     ftp.close()
@@ -486,10 +487,9 @@ if __name__ == "__main__":
 
             if args["--historical"]:
                 process_dataset("historical")
-                # raise RuntimeError("download of historical data is not yet implemented")
 
             if args["--recent"]:
-                raise RuntimeError("download of recent data is not yet implemented")
+                process_dataset("recent")
 
         except DocoptExit as ex:
             applog.ERROR = True
