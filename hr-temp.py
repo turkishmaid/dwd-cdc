@@ -38,6 +38,14 @@ import applog
 import config
 
 
+GLOBAL_STAT = {
+    "connection_sec": 0.0,
+    "downloaded_bytes": 0,
+    "download_time": 0.0,
+    "files_cnt": 0,
+    "readings_inserted": 0
+}
+
 def ls(path: Path) -> None:
     """
     Listet das angegebene Verzeichnis in zeitlicher Sortierung ins log.
@@ -55,13 +63,15 @@ class Connection:
     Nur als Context Handler verwendbar!
     """
 
-    def __init__(self):
+    def __init__(self, text="some activities"):
         self._db = Path(config.get("databases", "folder")) / "hr-temp.sqlite"
+        self.text = text
 
     def __enter__(self):
         """
         cur und con sind public für den Verwender
         """
+        self.t0 = perf_counter()
         self.conn = sqlite3.connect(self._db)
         self.cur = self.conn.cursor()
         return self
@@ -73,6 +83,9 @@ class Connection:
         self.conn.close()
         self.cur = None
         self.conn = None
+        dt = perf_counter() - self.t0
+        GLOBAL_STAT["connection_sec"] += dt
+        logging.info(f"Connection was open for {dt:.6f} s ({self.text})")
 
 
 class ProcessStationen:
@@ -96,6 +109,9 @@ class ProcessStationen:
             logging.info(f"{self.cnt} Stationen gelesen und geparst {t.read()}")
             ftp.quit()
         logging.info(f"Verbindung zum DWD geschlossen {t.read()}")
+        GLOBAL_STAT["download_time"] += t.read(raw=True)
+        GLOBAL_STAT["files_cnt"] += 1
+
 
     def _collect(self, line: str) -> None:
         """
@@ -111,6 +127,7 @@ class ProcessStationen:
             # 19690523 -> 1969-05-23
             return "%s-%s-%s" % (s[0:4], s[4:6], s[6:])
 
+        GLOBAL_STAT["downloaded_bytes"] += len(line)
         if line.startswith("Stations_id") or line.startswith("-----------"):
             pass
         else:
@@ -137,7 +154,7 @@ class ProcessStationen:
 
     def _upsert(self):
         with applog.Timer() as t:
-            with Connection() as c:
+            with Connection("insert stationen") as c:
                 # https://database.guide/how-on-conflict-works-in-sqlite/
                 c.cur.executemany("""
                     INSERT OR REPLACE INTO stationen
@@ -145,6 +162,47 @@ class ProcessStationen:
                 """, self.rows)
                 c.commit()
         logging.info(f"{self.cnt} Stationen in die Datenbank geschrieben {t.read()}")
+
+
+LAND_MAP = {
+    "Baden-Württemberg" : "BW",
+    "Bayern" : "BY",
+    "Berlin" : "BE",
+    "Brandenburg" : "BB",
+    "Bremen" : "HB",
+    "Hamburg" : "HH",
+    "Hessen" : "HE",
+    "Mecklenburg-Vorpommern" : "MV",
+    "Niedersachsen" : "NI",
+    "Nordrhein-Westfalen" : "",
+    "Rheinland-Pfalz" : "RP",
+    "Saarland" : "SL",
+    "Sachsen" : "SN",
+    "Sachsen-Anhalt" : "ST",
+    "Schleswig-Holstein" : "SH",
+    "Thüringen" : "TH",
+}
+
+def station_name(station: int, c: Connection):
+    sql = "select name, land from stationen where station = ?"
+    c.cur.execute(sql, (station,))
+    name = "?"
+    land = "?"
+    for row in c.cur:
+        if row[0]:
+            name = row[0]
+            land = row[1]
+    return f"{station}, {name} ({LAND_MAP[land]})"
+#    return f"{station}, {name} ({land})"
+
+
+def station_data_until(station: int, c: Connection):
+    c.cur.execute("SELECT yyyymmddhh FROM recent where station = ?", (station,))
+    until = NULLDATUM
+    for row in c.cur:
+        if row[0]:
+            until = row[0]
+    return until
 
 
 class FtpFileList:
@@ -167,6 +225,8 @@ class FtpFileList:
             rt = ftp.retrlines("NLST *.zip", callback=self._collect)
         logging.info(rt)      # like "226 Directory send OK."
         logging.info(f"{self._cnt} Filenamen gelesen {t.read()}")
+        GLOBAL_STAT["download_time"] += t.read(raw=True)
+        GLOBAL_STAT["files_cnt"] += 1
 
     def _collect(self, fnam: str) -> None:
         """
@@ -175,6 +235,7 @@ class FtpFileList:
         """
         self._zips.append(fnam)
         self._cnt += 1
+        GLOBAL_STAT["downloaded_bytes"] += len(fnam)
 
     def get(self) -> list:
         """
@@ -197,6 +258,7 @@ class ProcessDataFile:
         """
         self._verbose = verbose
         logging.info(f'DataFile(_,"{fnam}")')
+        station, name, surpress_up_to = self._get_station(fnam)
         with applog.Timer() as t:
             with TemporaryDirectory() as temp_dir:
                 temp_dir = Path(temp_dir)
@@ -204,14 +266,12 @@ class ProcessDataFile:
                 zipfile_path = temp_dir / fnam
                 self._download(ftp, fnam, zipfile_path)
                 produkt_path = self._extract(zipfile_path, temp_dir)
-                with Connection() as c:
-                    station, readings = self._parse(produkt_path, c)
-                    if readings:
+                readings = self._parse(produkt_path, name, surpress_up_to)
+                if readings:
+                    with Connection("insert readings") as c:
                         self._insert_readings(readings, c)
                         last_date = self._update_recent(readings, c)
                         c.commit()  # gemeinsamer commit ist sinnvoll
-                # ls(temp_dir)
-                # hurz = 17
         logging.info(f"Werte für Station {station} verarbeitet {t.read()}")
 
         if temp_dir.exists():
@@ -233,7 +293,9 @@ class ProcessDataFile:
             if self._verbose:
                 print()  # awkward
         logging.info(f"Zipfile heruntergeladen: {self._volume:,} Bytes in {self._cnt} Blöcken {t.read()}")
-        assert to_path.exists()
+        GLOBAL_STAT["downloaded_bytes"] += self._volume
+        GLOBAL_STAT["download_time"] += t.read(raw=True)
+        GLOBAL_STAT["files_cnt"] += 1
 
     def _collect(self, b: bytes) -> None:
         """
@@ -246,6 +308,22 @@ class ProcessDataFile:
         tick = (self._cnt % 100 == 0)
         if self._verbose and tick:
             print(".", end="", flush=True)
+
+    def _get_station(self, fnam: str) -> tuple:
+        """
+        Bestimmt die Station aus dem Filenamen
+        :param fnam: Filename einer .zip-Datei like "stundenwerte_TU_00003_19500401_20110331_hist.zip"
+        :param c: Offene Connection zur Datenbank
+        :return: tuple(Stationsnumer, druckbarer Name, Daten vorhanden bis)
+        """
+        with applog.Timer() as t:
+            station = int(fnam.split(".")[0].split("_")[2])
+            with Connection("get station detail") as c:
+                with applog.Timer() as t:
+                    name = station_name(station, c)
+                    surpress_up_to = station_data_until(station, c)
+        logging.info(f"Station {name} (Daten bis {surpress_up_to} bereits vorhanden) {t.read()}")
+        return station, name, surpress_up_to
 
     def _extract(self, zipfile_path: Path, target_path: Path) -> Path:
         """
@@ -267,11 +345,13 @@ class ProcessDataFile:
                 return Path(produkt)
         raise ValueError(f"Kein produkt_-File in {zipfile_path}")
 
-    def _parse(self, produkt_path: Path, c: Connection) -> list:
+    # TODO prüfen, dass alle Werte auch von der gewünschten Station kommen
+    def _parse(self, produkt_path: Path, name: str, surpress_up_to: str) -> list:
         """
         Parsen des Datenfiles.
         :param produkt_path: Pfad des Datenfiles
-        :param c: Connection zur Datenbank
+        :param name: druckbarer Name der Station
+        :param surpress_up_to: Daten bis zu diesem Zeitpunkt sind bereits vorhanden, YYYYMMDDHH
         :return: Stationsnummer und eine Liste von Tupeln, die in die Tabelle readings eingefügt werden können
         """
 
@@ -287,17 +367,6 @@ class ProcessDataFile:
             H = int(yymmddhh[-2:])
             return Y, M, D, H
 
-        stem = produkt_path.stem  # like "produkt_tu_stunde_19500401_20110331_00003"
-        _, _, _, von, bis, station = stem.split("_")
-        station = int(station)
-        # Bestimme letzen vorhandenen Wert
-        with applog.Timer() as t:
-            c.cur.execute("SELECT yyyymmddhh FROM recent where station = ?", (station,))
-            surpress_up_to = NULLDATUM
-            for row in c.cur:
-                if row[0]:
-                    surpress_up_to = row[0]
-        logging.info(f"Station {station} (Daten bis {surpress_up_to} bereits vorhanden) {t.read()}")
         with applog.Timer() as t:
             readings = list()
             with open(produkt_path, newline='') as csvfile:
@@ -328,8 +397,8 @@ class ProcessDataFile:
                         shown += 1
                         logging.info(str(tup))
                     readings.append(tup)
-        logging.info(f"{len(readings)} neue Messwerte für Station {station} gefunden {t.read()}")
-        return station, readings
+        logging.info(f"{len(readings)} neue Messwerte für Station {name} gefunden {t.read()}")
+        return readings
 
     def _insert_readings(self, readings: list, c: Connection) -> None:
         with applog.Timer() as t:
@@ -339,6 +408,7 @@ class ProcessDataFile:
             """, readings)
             # c.commit() -- commit außerhalb
         logging.info(f"{len(readings)} Zeilen in die Datenbank eingearbeitet {t.read()}")
+        GLOBAL_STAT["readings_inserted"] += len(readings)
 
     def _update_recent(self, readings: list, c: Connection) -> str:
         # get station, assuming that is the same in all tuples
@@ -373,9 +443,14 @@ def process_dataset(kind: str) -> None:
     logging.info(f"Connectiert an {SERVER} pwd={remote} {t.read()}")
 
     file_list = FtpFileList(ftp).get()
-    for fnam in file_list[:1]:
+    for fnam in file_list[6:10]:
         ProcessDataFile(ftp, fnam, verbose=True)
     hurz = 17  # für Brechpunkt
+
+    ftp.close()
+    logging.info(f"Connection zum DWD geschlossen")
+
+    logging.info("Statistik\n" + json.dumps(GLOBAL_STAT, indent=4))
 
 
 OPCODE = None     # enable one for interactive debugging in IDE w/o using run configurations
