@@ -78,6 +78,7 @@ class Connection:
 
     def commit(self):
         self.conn.commit()
+        # TODO sqlite3.OperationalError: database is locked
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.conn.close()
@@ -290,6 +291,7 @@ class ProcessDataFile:
         with applog.Timer() as t:
             with open(to_path, 'wb') as self.open_zip_file:
                 ftp.retrbinary("RETR " + from_fnam, self._collect)
+                # TODO TimeoutError: [Errno 60] Operation timed out
             if self._verbose:
                 print()  # awkward
         logging.info(f"Zipfile heruntergeladen: {self._volume:,} Bytes in {self._cnt} Blöcken {t.read()}")
@@ -491,6 +493,7 @@ if __name__ == "__main__":
 
             if args["--recent"]:
                 process_dataset("recent")
+                # TODO nach dem Runterladen eine Kopie der Datenbank für Auswertungszwecke machen
 
         except DocoptExit as ex:
             applog.ERROR = True
