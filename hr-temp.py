@@ -446,6 +446,7 @@ def process_dataset(kind: str) -> None:
     # for fnam in file_list[6:10]:
     for fnam in file_list:
         ProcessDataFile(ftp, fnam, verbose=True)
+        logging.info("---")
         sleep(3)  # be nice: reduce load on server
     hurz = 17  # für Brechpunkt
 
