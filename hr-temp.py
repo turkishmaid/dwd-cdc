@@ -27,6 +27,7 @@ from ftplib import FTP
 import sqlite3
 from pathlib import Path
 from tempfile import TemporaryDirectory
+import os
 
 from docopt import docopt, DocoptExit, DocoptLanguageError
 
@@ -35,14 +36,28 @@ import applog
 import config
 
 
+def ls(path: Path) -> None:
+    """
+    Listet das angegebene Verzeichnis in zeitlicher Sortierung ins log.
+    Cortesy https://linuxhandbook.com/execute-shell-command-python/
+
+    :param path: das zu listende Verzeichnis
+    """
+    console = os.popen(f'cd {path}; ls -latr').read()
+    logging.info(f"ls -la {path}:\n" + console)
+
+
 class Connection:
     # manages SQLite connection and cursor to avoid caring for the name in many routines
 
     def __init__(self):
-        self.db = Path(config.get("databases", "folder")) / "hr-temp.sqlite"
+        self._db = Path(config.get("databases", "folder")) / "hr-temp.sqlite"
 
     def __enter__(self):
-        self.conn = sqlite3.connect(self.db)
+        """
+        cur und con sind public für den Verwender
+        """
+        self.conn = sqlite3.connect(self._db)
         self.cur = self.conn.cursor()
         return self
 
@@ -56,11 +71,15 @@ class Connection:
 
 
 class ProcessStationen:
-    # ein File, alle Stationen (Stammdaten)
+    # ein File, alle Stationen (Stammdaten), kapselt den Ursprungsort der Liste
 
     def __init__(self):
-        with applog.Timer() as t:
+        self._download()
+        self._upsert()
 
+    # TODO absichern mit try und sleep/retry, kein Programmabbruch bei Fehler
+    def _download(self) -> None:
+        with applog.Timer() as t:
             ftp = FTP("opendata.dwd.de")
             ftp.login()  # anonymous
             ftp.cwd("climate_environment/CDC/observations_germany/climate/hourly/air_temperature/recent")
@@ -71,21 +90,19 @@ class ProcessStationen:
             logging.info(rt)  # like "226 Directory send OK."
             logging.info(f"{self.cnt} Stationen gelesen und geparst {t.read()}")
             ftp.quit()
-            logging.info(f"Verbindung zum DWD geschlossen {t.read()}")
+        logging.info(f"Verbindung zum DWD geschlossen {t.read()}")
 
-            t.reset()
-            with Connection() as c:
-                # https://database.guide/how-on-conflict-works-in-sqlite/
-                c.cur.executemany("""
-                    INSERT OR REPLACE INTO stationen
-                    VALUES (?,?,?,?,?,?,?,?)
-                """, self.rows)
-                c.commit()
-            logging.info(f"{self.cnt} Stationen in die Datenbak geschrieben {t.read()}")
-
-    # callback for ftp.retrlines()
-    def _collect(self, line: str):
+    def _collect(self, line: str) -> None:
+        """
+        Callback für FTP.retrlines
+        :param line: Zeile der Stationsliste = Station (oder Überschrift)
+        """
         def iso_date(s: str) -> str:
+            """
+            Formatiert ds CDC Datum als ISO-Datum. Bsp.: 19690523 -> 1969-05-23
+            :param s: Datum in Schreibweise YYYYMMDD
+            :return: Datum in Schreibweise YYYY-MM-DD
+            """
             # 19690523 -> 1969-05-23
             return "%s-%s-%s" % (s[0:4], s[4:6], s[6:])
 
@@ -113,29 +130,53 @@ class ProcessStationen:
             self.rows.append(tup)
             self.cnt += 1
 
+    def _upsert(self):
+        with applog.Timer() as t:
+            with Connection() as c:
+                # https://database.guide/how-on-conflict-works-in-sqlite/
+                c.cur.executemany("""
+                    INSERT OR REPLACE INTO stationen
+                    VALUES (?,?,?,?,?,?,?,?)
+                """, self.rows)
+                c.commit()
+        logging.info(f"{self.cnt} Stationen in die Datenbank geschrieben {t.read()}")
+
 
 class FtpFileList:
     # bestimmt alle .zip-Dateien in einem FTP-Verzeichnis
 
     def __init__(self, ftp: FTP):
         """
+        :param ftp: geöffnete FTP Verbindung mit dem richtigen Arbeitsverzeichnis
+        """
+        self._download(ftp)
 
+    def _download(self, ftp: FTP) -> None:
+        """
         :param ftp: geöffnete FTP Verbindung mit dem richtigen Arbeitsverzeichnis
         """
         # retrieve list of .zip files to download
-        self.zips = list()
-        self.cnt = 0
+        self._zips = list()
+        self._cnt = 0
         with applog.Timer() as t:
-            rt = ftp.retrlines("NLST *.zip", callback=self.collect)
+            rt = ftp.retrlines("NLST *.zip", callback=self._collect)
         logging.info(rt)      # like "226 Directory send OK."
-        logging.info(f"{self.cnt} Filenamen gelesen {t.read()}")
+        logging.info(f"{self._cnt} Filenamen gelesen {t.read()}")
 
-    def collect(self, fnam: str) -> None:
-        self.zips.append(fnam)
-        self.cnt += 1
+    def _collect(self, fnam: str) -> None:
+        """
+        Callback für FTP.retrlines.
+        :param fnam: Zeile der Fileliste = Filename
+        """
+        self._zips.append(fnam)
+        self._cnt += 1
 
-    def get(self):
-        return self.zips
+    def get(self) -> list:
+        """
+        Gibt das Ergebnis des Downloads zurück.
+        :return: Liste von Zip-Filenamen
+        """
+        return self._zips
 
 
 class ProcessDataFile:
@@ -143,38 +184,50 @@ class ProcessDataFile:
 
     def __init__(self, ftp: FTP, fnam: str, verbose: bool = False):
         """
-
         :param ftp: geöffnete FTP Verbindung mit dem richtigen Arbeitsverzeichnis
         :param fnam: Name des herunterzuladenden Files
         :param verbose: Konsolenausgabe als Fortschrittinfo -- DO NOT USE IN PRODUCTION
         """
+        self._verbose = verbose
         logging.info(f'DataFile(_,"{fnam}")')
         with TemporaryDirectory() as temp_dir:
             temp_dir = Path(temp_dir)
             logging.info(f"Temporäres Verzeichnis: {temp_dir}")
             zipfile = temp_dir / fnam
-            self.cnt = 0
-            self.volume = 0
-            self.verbose = verbose
-            # TODO absichern mit try und sleep/retry, kein Programmabbruch bei Fehler
-            with applog.Timer() as t:
-                with open(zipfile, 'wb') as self.open_zip_file:
-                    ftp.retrbinary("RETR " + fnam, self.collect)
-                if self.verbose:
-                    print()  # awkward
-            logging.info(f"Zipfile heruntergeladen: {self.volume:,} Bytes in {self.cnt} Blöcken {t.read()}")
-            assert zipfile.exists()
+            self._download(ftp, fnam, zipfile)
+            ls(temp_dir)
 
         if temp_dir.exists():
             applog.ERROR = True
             logging.error(f"Temporäres Verzeichnis {temp_dir} wurde NICHT entfernt")
 
-    def collect(self, b):
+    def _download(self, ftp: FTP, from_fnam: str, to_path: Path) -> None:
+        """
+        :param ftp: geöffnete FTP Verbindung mit dem richtigen Arbeitsverzeichnis
+        :param from_fnam: Name des herunterzuladenden Files
+        :param to_path: Speicherort lokal
+        """
+        self._cnt = 0
+        self._volume = 0
+        # TODO absichern mit try und sleep/retry, kein Programmabbruch bei Fehler
+        with applog.Timer() as t:
+            with open(to_path, 'wb') as self.open_zip_file:
+                ftp.retrbinary("RETR " + from_fnam, self._collect)
+            if self._verbose:
+                print()  # awkward
+        logging.info(f"Zipfile heruntergeladen: {self._volume:,} Bytes in {self._cnt} Blöcken {t.read()}")
+        assert to_path.exists()
+
+    def _collect(self, b: bytes) -> None:
+        """
+        Callback für FTP.retrbinary
+        :param b:
+        """
         self.open_zip_file.write(b)
-        self.cnt += 1
-        self.volume += len(b)
-        tick = ( self.cnt % 100 == 0 )
-        if self.verbose and tick:
+        self._cnt += 1
+        self._volume += len(b)
+        tick = (self._cnt % 100 == 0)
+        if self._verbose and tick:
             print(".", end="", flush=True)
 
 
@@ -197,10 +250,10 @@ def process_dataset(kind: str) -> None:
     hurz = 17  # für Brechpunkt
 
 
-# OPCODE = None     # enable one for interactive debugging in IDE w/o using run configurations
+OPCODE = None     # enable one for interactive debugging in IDE w/o using run configurations
 # OPCODE = "recent"
 # OPCODE = "historical"
-OPCODE = "stations"
+# OPCODE = "stations"
 
 if __name__ == "__main__":
     tracemalloc.start()
