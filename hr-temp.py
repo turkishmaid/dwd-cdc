@@ -443,7 +443,8 @@ def process_dataset(kind: str) -> None:
     logging.info(f"Connectiert an {SERVER} pwd={remote} {t.read()}")
 
     file_list = FtpFileList(ftp).get()
-    for fnam in file_list[6:10]:
+    # for fnam in file_list[6:10]:
+    for fnam in file_list:
         ProcessDataFile(ftp, fnam, verbose=True)
     hurz = 17  # für Brechpunkt
 
