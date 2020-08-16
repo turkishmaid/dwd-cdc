@@ -26,6 +26,7 @@ import logging
 from ftplib import FTP
 import sqlite3
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from docopt import docopt, DocoptExit, DocoptLanguageError
 
@@ -55,14 +56,15 @@ class Connection:
 
 
 class Stationen:
+    # ein File, alle Stationen (Stammdaten)
 
     def __init__(self):
         self.cnt = 0
         self.rows = list()
 
     # callback for ftp.retrlines()
-    def collect(self, line):
-        def good_date(s):
+    def _collect(self, line: str):
+        def iso_date(s: str) -> str:
             # 19690523 -> 1969-05-23
             return "%s-%s-%s" % (s[0:4], s[4:6], s[6:])
 
@@ -79,8 +81,8 @@ class Stationen:
             tup = (
                 # Tabelle stationen
                 int(parts[0]),          # station integer,
-                good_date(parts[1]),    # yymmdd_von text,
-                good_date(parts[2]),    # yymmdd_bis text,
+                iso_date(parts[1]),    # yymmdd_von text,
+                iso_date(parts[2]),    # yymmdd_bis text,
                 int(parts[3]),          # hoehe integer,
                 float(parts[4]),        # breite real,
                 float(parts[5]),        # laenge real,
@@ -90,6 +92,7 @@ class Stationen:
             self.rows.append(tup)
             self.cnt += 1
 
+    # TODO refactor into __init__
     def load(self):
         with applog.Timer() as t:
 
@@ -98,7 +101,7 @@ class Stationen:
             ftp.cwd("climate_environment/CDC/observations_germany/climate/hourly/air_temperature/recent")
             logging.info(f"zum DWD konnektiert {t.read()}")
             self.rows = list()
-            rt = ftp.retrlines("RETR TU_Stundenwerte_Beschreibung_Stationen.txt", self.collect)
+            rt = ftp.retrlines("RETR TU_Stundenwerte_Beschreibung_Stationen.txt", self._collect)
             logging.info(rt)  # like "226 Directory send OK."
             logging.info(f"{self.cnt} Stationen gelesen und geparst {t.read()}")
             ftp.quit()
@@ -115,9 +118,92 @@ class Stationen:
             logging.info(f"{self.cnt} Stationen in die Datenbak geschrieben {t.read()}")
 
 
-OPCODE = None     # enable one for interactive debugging in IDE w/o using run configurations
+class FtpFileList:
+    # bestimmt alle .zip-Dateien in einem FTP-Verzeichnis
+
+    def __init__(self, ftp: FTP):
+        """
+
+        :param ftp: geöffnete FTP Verbindung mit dem richtigen Arbeitsverzeichnis
+        """
+        # retrieve list of .zip files to download
+        self.zips = list()
+        self.cnt = 0
+        with applog.Timer() as t:
+            rt = ftp.retrlines("NLST *.zip", callback=self.collect)
+        logging.info(rt)      # like "226 Directory send OK."
+        logging.info(f"{self.cnt} Filenamen gelesen {t.read()}")
+
+    def collect(self, fnam: str) -> None:
+        self.zips.append(fnam)
+        self.cnt += 1
+
+    def get(self):
+        return self.zips
+
+
+class ProcessDataFile:
+    # Downloads, parses and saves a CDC data file from an open FTP connection
+
+    def __init__(self, ftp: FTP, fnam: str, verbose: bool = False):
+        """
+
+        :param ftp: geöffnete FTP Verbindung mit dem richtigen Arbeitsverzeichnis
+        :param fnam: Name des herunterzuladenden Files
+        :param verbose: Konsolenausgabe als Fortschrittinfo -- DO NOT USE IN PRODUCTION
+        """
+        logging.info(f'DataFile(_,"{fnam}")')
+        with TemporaryDirectory() as temp_dir:
+            temp_dir = Path(temp_dir)
+            logging.info(f"Temporäres Verzeichnis: {temp_dir}")
+            zipfile = temp_dir / fnam
+            self.cnt = 0
+            self.volume = 0
+            self.verbose = verbose
+            # TODO absichern mit try und sleep/retry, kein Programmabbruch bei Fehler
+            with applog.Timer() as t:
+                with open(zipfile, 'wb') as self.open_zip_file:
+                    ftp.retrbinary("RETR " + fnam, self.collect)
+                if self.verbose:
+                    print()  # awkward
+            logging.info(f"Zipfile heruntergeladen: {self.volume:,} Bytes in {self.cnt} Blöcken {t.read()}")
+            assert zipfile.exists()
+
+        if temp_dir.exists():
+            applog.ERROR = True
+            logging.error(f"Temporäres Verzeichnis {temp_dir} wurde NICHT entfernt")
+
+    def collect(self, b):
+        self.open_zip_file.write(b)
+        self.cnt += 1
+        self.volume += len(b)
+        tick = ( self.cnt % 100 == 0 )
+        if self.verbose and tick:
+            print(".", end="", flush=True)
+
+
+# Germany > hourly > Temperaure > hictorical
+SERVER = "opendata.dwd.de"
+REMOTE_BASE = "climate_environment/CDC/observations_germany/climate/hourly/air_temperature"
+
+def process_dataset(kind: str) -> None:
+
+    remote = REMOTE_BASE + "/" + kind
+    with applog.Timer() as t:
+        ftp = FTP(SERVER)
+        ftp.login()  # anonymous
+        ftp.cwd(remote)
+    logging.info(f"Connectiert an {SERVER} pwd={remote} {t.read()}")
+
+    file_list = FtpFileList(ftp).get()
+    for fnam in file_list[:1]:
+        ProcessDataFile(ftp, fnam, verbose=True)
+    hurz = 17  # für Brechpunkt
+
+
+# OPCODE = None     # enable one for interactive debugging in IDE w/o using run configurations
 # OPCODE = "recent"
-# OPCODE = "historical"
+OPCODE = "historical"
 # OPCODE = "stations"
 
 if __name__ == "__main__":
@@ -147,7 +233,8 @@ if __name__ == "__main__":
                 s.load()
 
             if args["--historical"]:
-                raise RuntimeError("download of historical data is not yet implemented")
+                process_dataset("historical")
+                # raise RuntimeError("download of historical data is not yet implemented")
 
             if args["--recent"]:
                 raise RuntimeError("download of recent data is not yet implemented")
