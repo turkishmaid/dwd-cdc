@@ -55,12 +55,33 @@ class Connection:
         self.conn = None
 
 
-class Stationen:
+class ProcessStationen:
     # ein File, alle Stationen (Stammdaten)
 
     def __init__(self):
-        self.cnt = 0
-        self.rows = list()
+        with applog.Timer() as t:
+
+            ftp = FTP("opendata.dwd.de")
+            ftp.login()  # anonymous
+            ftp.cwd("climate_environment/CDC/observations_germany/climate/hourly/air_temperature/recent")
+            logging.info(f"zum DWD konnektiert {t.read()}")
+            self.rows = list()
+            self.cnt = 0
+            rt = ftp.retrlines("RETR TU_Stundenwerte_Beschreibung_Stationen.txt", self._collect)
+            logging.info(rt)  # like "226 Directory send OK."
+            logging.info(f"{self.cnt} Stationen gelesen und geparst {t.read()}")
+            ftp.quit()
+            logging.info(f"Verbindung zum DWD geschlossen {t.read()}")
+
+            t.reset()
+            with Connection() as c:
+                # https://database.guide/how-on-conflict-works-in-sqlite/
+                c.cur.executemany("""
+                    INSERT OR REPLACE INTO stationen
+                    VALUES (?,?,?,?,?,?,?,?)
+                """, self.rows)
+                c.commit()
+            logging.info(f"{self.cnt} Stationen in die Datenbak geschrieben {t.read()}")
 
     # callback for ftp.retrlines()
     def _collect(self, line: str):
@@ -91,31 +112,6 @@ class Stationen:
             )
             self.rows.append(tup)
             self.cnt += 1
-
-    # TODO refactor into __init__
-    def load(self):
-        with applog.Timer() as t:
-
-            ftp = FTP("opendata.dwd.de")
-            ftp.login()  # anonymous
-            ftp.cwd("climate_environment/CDC/observations_germany/climate/hourly/air_temperature/recent")
-            logging.info(f"zum DWD konnektiert {t.read()}")
-            self.rows = list()
-            rt = ftp.retrlines("RETR TU_Stundenwerte_Beschreibung_Stationen.txt", self._collect)
-            logging.info(rt)  # like "226 Directory send OK."
-            logging.info(f"{self.cnt} Stationen gelesen und geparst {t.read()}")
-            ftp.quit()
-            logging.info(f"Verbindung zum DWD geschlossen {t.read()}")
-
-            t.reset()
-            with Connection() as c:
-                # https://database.guide/how-on-conflict-works-in-sqlite/
-                c.cur.executemany("""
-                    INSERT OR REPLACE INTO stationen
-                    VALUES (?,?,?,?,?,?,?,?)
-                """, self.rows)
-                c.commit()
-            logging.info(f"{self.cnt} Stationen in die Datenbak geschrieben {t.read()}")
 
 
 class FtpFileList:
@@ -203,8 +199,8 @@ def process_dataset(kind: str) -> None:
 
 # OPCODE = None     # enable one for interactive debugging in IDE w/o using run configurations
 # OPCODE = "recent"
-OPCODE = "historical"
-# OPCODE = "stations"
+# OPCODE = "historical"
+OPCODE = "stations"
 
 if __name__ == "__main__":
     tracemalloc.start()
@@ -229,8 +225,7 @@ if __name__ == "__main__":
                 logging.info(json.dumps(args, indent=4))
 
             if args["--stations"]:
-                s = Stationen()
-                s.load()
+                ProcessStationen()
 
             if args["--historical"]:
                 process_dataset("historical")
