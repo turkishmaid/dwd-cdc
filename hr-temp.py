@@ -448,9 +448,9 @@ def process_dataset(kind: str) -> None:
 
     file_list = FtpFileList(ftp).get()
     # for fnam in file_list[6:10]:
-    for fnam in file_list:
+    for i, fnam in enumerate(file_list):
         ProcessDataFile(ftp, fnam, verbose=True)
-        logging.info("---")
+        logging.info(f"--- {i/len(file_list)*100:.0f} %")
         sleep(3)  # be nice: reduce load on server
     hurz = 17  # für Brechpunkt
 
@@ -496,6 +496,7 @@ if __name__ == "__main__":
             if args["--recent"]:
                 process_dataset("recent")
                 # TODO nach dem Runterladen eine Kopie der Datenbank für Auswertungszwecke machen
+                # TODO bei SUCCESS nur eine kleine Statistik senden, nur bei ERROR das ganze Log
 
         except DocoptExit as ex:
             applog.ERROR = True
