@@ -446,12 +446,39 @@ def process_dataset(kind: str) -> None:
         ftp.cwd(remote)
     logging.info(f"Connectiert an {SERVER} pwd={remote} {t.read()}")
 
-    file_list = FtpFileList(ftp).get()
+    for attempt in range(3):
+        try:
+            file_list = FtpFileList(ftp).get()
+        except TimeoutError as ex:  # will hopefully catch socket timeout
+            logging.exception("Timeout - " + ("will retry" if attempt < 2 else "no more retries"))
+            sleep(3)  # give the server a break
+        else:
+            break
+    else:
+        applog.ERROR = True
+        raise RuntimeError("Finally failed to retrieve list of zip-files - terminating...")
+
     # for fnam in file_list[6:10]:
     for i, fnam in enumerate(file_list):
-        ProcessDataFile(ftp, fnam, verbose=True)
-        logging.info(f"--- {i/len(file_list)*100:.0f} %")
-        sleep(3)  # be nice: reduce load on server
+        # https://stackoverflow.com/a/7663441/3991164 - resiliance is hard to test...
+        for attempt in range(3):
+            try:
+                ProcessDataFile(ftp, fnam, verbose=True)
+                logging.info(f"--- {i/len(file_list)*100:.0f} %")
+                sleep(3)  # be nice: reduce load on server
+            except TimeoutError as ex:  # will hopefully catch socket timeout
+                logging.exception("Timeout - " + ("will retry" if attempt < 2 else "no more retries"))
+                sleep(3)  # give the server a break
+            except Exception as ex:  # will not catch KeyboardInterrupt :)
+                logging.exception("Exception caught - " + ("will retry" if attempt < 2 else "no more retries"))
+                sleep(3)  # give it a break
+            else:  # executed when the execution falls thru the try
+                break
+        else:
+            applog.ERROR = True
+            logging.error(f"Finally failed to process file {fnam}")
+            # continues to next file
+
     hurz = 17  # für Brechpunkt
 
     ftp.close()
@@ -508,7 +535,6 @@ if __name__ == "__main__":
         current, peak = tracemalloc.get_traced_memory()
         logging.info("Memory: current = %0.1f MB, peak = %0.1f MB" % (current / 1024.0 / 1024, peak / 1024.0 / 1024))
     except KeyboardInterrupt:
-        applog.ERROR = True
         logging.warning("caught KeyboardInterrupt")
     except Exception as ex:
         applog.ERROR = True
