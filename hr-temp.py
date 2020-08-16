@@ -19,6 +19,8 @@ Options:
 """
 # Created: 09.08.20
 
+# TODO Möglichkeit, die Stationen zu limitieren, etwa in Form einer übersteuerbaren Liste in der .ini-Datei
+
 from time import perf_counter, process_time, sleep
 import json
 import tracemalloc
