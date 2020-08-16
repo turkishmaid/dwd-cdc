@@ -28,6 +28,8 @@ import sqlite3
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import os
+from zipfile import ZipFile
+import csv
 
 from docopt import docopt, DocoptExit, DocoptLanguageError
 
@@ -48,7 +50,10 @@ def ls(path: Path) -> None:
 
 
 class Connection:
-    # manages SQLite connection and cursor to avoid caring for the name in many routines
+    """
+    Manages SQLite connection and cursor to avoid caring for the name in many routines.
+    Nur als Context Handler verwendbar!
+    """
 
     def __init__(self):
         self._db = Path(config.get("databases", "folder")) / "hr-temp.sqlite"
@@ -179,6 +184,8 @@ class FtpFileList:
         return self._zips
 
 
+NULLDATUM = "1700010100"      # Früher als alles. 1970 geht ja beim DWD nicht :)
+
 class ProcessDataFile:
     # Downloads, parses and saves a CDC data file from an open FTP connection
 
@@ -190,12 +197,22 @@ class ProcessDataFile:
         """
         self._verbose = verbose
         logging.info(f'DataFile(_,"{fnam}")')
-        with TemporaryDirectory() as temp_dir:
-            temp_dir = Path(temp_dir)
-            logging.info(f"Temporäres Verzeichnis: {temp_dir}")
-            zipfile = temp_dir / fnam
-            self._download(ftp, fnam, zipfile)
-            ls(temp_dir)
+        with applog.Timer() as t:
+            with TemporaryDirectory() as temp_dir:
+                temp_dir = Path(temp_dir)
+                logging.info(f"Temporäres Verzeichnis: {temp_dir}")
+                zipfile_path = temp_dir / fnam
+                self._download(ftp, fnam, zipfile_path)
+                produkt_path = self._extract(zipfile_path, temp_dir)
+                with Connection() as c:
+                    station, readings = self._parse(produkt_path, c)
+                    if readings:
+                        self._insert_readings(readings, c)
+                        last_date = self._update_recent(readings, c)
+                        c.commit()  # gemeinsamer commit ist sinnvoll
+                # ls(temp_dir)
+                # hurz = 17
+        logging.info(f"Werte für Station {station} verarbeitet {t.read()}")
 
         if temp_dir.exists():
             applog.ERROR = True
@@ -229,6 +246,117 @@ class ProcessDataFile:
         tick = (self._cnt % 100 == 0)
         if self._verbose and tick:
             print(".", end="", flush=True)
+
+    def _extract(self, zipfile_path: Path, target_path: Path) -> Path:
+        """
+        Die zip-Files enthalten jeweils eine Reihe von html und txt Dateien,
+        die die Station und ihre Messgeräte beschreiben. Für den Zweck dieser
+        Auswertungen hier sind das urban legends, die getrost ignoriert werden
+        können. Die Nutzdaten befinden sich in einem CSV File produkt_*.txt.
+        Dieses wird ins tmp/-Verzeichnis extrahiert.
+
+        :param zipfile_path: Path der zu entpackenden zip-Files
+        :param target_path: Path des Zielverzeichnisses zum entpacken
+        :return: Path des Datenfiles
+        """
+        zipfile = ZipFile(zipfile_path)
+        for zi in zipfile.infolist():
+            if zi.filename.startswith("produkt_"):
+                produkt = zipfile.extract(zi, path=target_path)
+                logging.info(f"Daten in {produkt}")
+                return Path(produkt)
+        raise ValueError(f"Kein produkt_-File in {zipfile_path}")
+
+    def _parse(self, produkt_path: Path, c: Connection) -> list:
+        """
+        Parsen des Datenfiles.
+        :param produkt_path: Pfad des Datenfiles
+        :param c: Connection zur Datenbank
+        :return: Stationsnummer und eine Liste von Tupeln, die in die Tabelle readings eingefügt werden können
+        """
+
+        def ymdh(yymmddhh: str) -> tuple:
+            """
+            Aufbrechen der DWD Zeitangabe in numerische Zeiteinheiten.
+            :param yymmddhh: Stunde in DWD-Format
+            :return: Tuple mit den numerischen Teilkomponenten
+            """
+            Y = int(yymmddhh[:4])
+            M = int(yymmddhh[4:6])
+            D = int(yymmddhh[6:8])
+            H = int(yymmddhh[-2:])
+            return Y, M, D, H
+
+        stem = produkt_path.stem  # like "produkt_tu_stunde_19500401_20110331_00003"
+        _, _, _, von, bis, station = stem.split("_")
+        station = int(station)
+        # Bestimme letzen vorhandenen Wert
+        with applog.Timer() as t:
+            c.cur.execute("SELECT yyyymmddhh FROM recent where station = ?", (station,))
+            surpress_up_to = NULLDATUM
+            for row in c.cur:
+                if row[0]:
+                    surpress_up_to = row[0]
+        logging.info(f"Station {station} (Daten bis {surpress_up_to} bereits vorhanden) {t.read()}")
+        with applog.Timer() as t:
+            readings = list()
+            with open(produkt_path, newline='') as csvfile:
+                spamreader = csv.reader(csvfile, delimiter=';')
+                cnt = 0
+                shown = 0
+                skipped = -1
+                for row in spamreader:
+                    cnt += 1
+                    if cnt == 1:                    # skip header line
+                        header = row
+                        continue
+                    Y, M, D, H = ymdh(row[1])
+                    tup = (
+                        int(row[0]),  # station
+                        Y, M, D, H,  # row[1],
+                        int(row[2]),  # q
+                        None if row[3].strip() == "-999" else float(row[3]),  # temp
+                        None if row[4].strip() == "-999" else float(row[4])  # humid
+                    )
+                    # surpress data that might be in DB already
+                    if row[1] <= surpress_up_to:
+                        continue
+                    elif skipped == -1:  # now uncond.
+                        skipped = cnt - 2  # current and first excluded
+                        logging.info(f"{skipped} Messwerte vor dem {surpress_up_to} wurden übersprungen")
+                    if shown <= 1: # show first 2 rows taken
+                        shown += 1
+                        logging.info(str(tup))
+                    readings.append(tup)
+        logging.info(f"{len(readings)} neue Messwerte für Station {station} gefunden {t.read()}")
+        return station, readings
+
+    def _insert_readings(self, readings: list, c: Connection) -> None:
+        with applog.Timer() as t:
+            c.cur.executemany("""
+                INSERT OR IGNORE INTO readings
+                VALUES (?, ?,?,?,?, ?, ?,?)
+            """, readings)
+            # c.commit() -- commit außerhalb
+        logging.info(f"{len(readings)} Zeilen in die Datenbank eingearbeitet {t.read()}")
+
+    def _update_recent(self, readings: list, c: Connection) -> str:
+        # get station, assuming that is the same in all tuples
+        station = readings[0][0]
+        # get max time of reading from last line
+        # alternatively: https://stackoverflow.com/a/4800441/3991164
+        r = readings[-1]
+        yyyymmddhh = "%04d%02d%02d%02d" % (r[1], r[2], r[3], r[4])
+        with applog.Timer() as t:
+            # cf. https://stackoverflow.com/a/4330694/3991164
+            c.cur.execute("""
+                INSERT OR REPLACE
+                INTO recent (station, yyyymmddhh)
+                VALUES (?, ?)
+            """, (station, yyyymmddhh))
+            # c.commit() -- commit außerhalb
+        logging.info(f"Neuester Messwert {yyyymmddhh} in der Datenbank vermerkt {t.read()}")
+        return yyyymmddhh
 
 
 # Germany > hourly > Temperaure > hictorical
