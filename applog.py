@@ -10,6 +10,8 @@ import sys
 import logging
 from logging.handlers import RotatingFileHandler
 from time import perf_counter
+from pathlib import Path
+import os
 
 import dotfolder, mailgun
 
@@ -58,7 +60,7 @@ def init_logging(collective: bool = False, console: bool = False, process: bool 
         # default.log with 10 rotating segments of 100k each -> 1 MB (reicht viele Tage)
         _ROTATING_FILE_PATH = dotfolder.dotfolder() / "default.log"
         # TODO use https://pypi.org/project/concurrent-log-handler/ instead of RotatingFileHandler
-        # TODO Segmente vergrößern. DWD Tagesload macht 665k Log :)
+        # DONE Segmente vergrößern. DWD Tagesload macht 665k Log :)
         _ROTATING_FILE_HANDLER = RotatingFileHandler(_ROTATING_FILE_PATH, maxBytes=1_000_000, backupCount=10)
         _ROTATING_FILE_HANDLER.setLevel(logging.INFO)
         handlers.append(_ROTATING_FILE_HANDLER)
@@ -84,6 +86,29 @@ def init_logging(collective: bool = False, console: bool = False, process: bool 
     logging.info(f"LogManager lebt. ({','.join(remark)})")
 
 
+def tail(fnam: Path, circa: int = 1500) -> str:
+    """
+    Quickly get the last few lines of a possibly big log file.
+    :param fnam: Path or str to the file
+    :param circa: Specify approx. size of tail (from end of file)
+    :return: last few lines of the file
+    """
+    # https://www.roytuts.com/read-last-n-lines-from-file-using-python/
+    # https://stackoverflow.com/questions/46258499/read-the-last-line-of-a-file-in-python
+    # https://www.openwritings.net/pg/python/python-read-last-line-file
+    # https://stackoverflow.com/questions/17615414/how-to-convert-binary-string-to-normal-string-in-python3
+    with open(fnam, 'rb') as fh:
+        fh.seek(0, os.SEEK_END)
+        offset = min(1500, fh.tell())
+        fh.seek(-offset, os.SEEK_CUR)
+        last_lines = fh.readlines()
+        # first line might be incomplete
+        if len(last_lines) > 1:
+            last_lines = last_lines[1:]
+        # decode list of b-strings into str with LFs
+        return "...\n" + "".join([ l.decode() for l in last_lines ])
+
+
 def shoot_mail(subject="von DWD with love"):
     global _FILE_HANDLER
 
@@ -98,8 +123,13 @@ def shoot_mail(subject="von DWD with love"):
     logging.info(f'closed {_FILE_PATH}')
 
     # send file contents via email
-    # https://realpython.com/python-pathlib/#reading-and-writing-files
-    body = _FILE_PATH.read_text()
+    # DONE bei SUCCESS nur eine kleine Statistik senden, nur bei ERROR das ganze Log
+    if ERROR:
+        # https://realpython.com/python-pathlib/#reading-and-writing-files
+        body = _FILE_PATH.read_text()
+    else:
+        body = tail(_FILE_PATH)
+
     # logger.addHandler(_FILE_HANDLER) TODO not throw away but append after reading the contents
 
     subject = ( "ERROR - " if ERROR else "SUCCESS - " ) + subject

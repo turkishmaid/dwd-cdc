@@ -258,6 +258,7 @@ def is_data_expected(fnam: str = None, s: Station = None) -> bool:
         # we do not have to care for time zone here, b/c DWD will typically upload yesterdays data between 9am and 10am local time
         yester_dwdts = (date.today() + timedelta(days=-1)).strftime("%Y%m%d") + "23"
         # Vereinfachung: Wenn Daten bis gestern schon da sind -> nix tun
+        # TODO Wenn Daten bis zum Ende der Station schon da sind -> nix tun
         return s.dwdts_readings < yester_dwdts
 
 
@@ -576,7 +577,6 @@ if __name__ == "__main__":
             if args["--recent"]:
                 process_dataset("recent")
                 # TODO nach dem Runterladen eine Kopie der Datenbank für Auswertungszwecke machen
-                # TODO bei SUCCESS nur eine kleine Statistik senden, nur bei ERROR das ganze Log
 
             if args["--test"]:
                 experimental()

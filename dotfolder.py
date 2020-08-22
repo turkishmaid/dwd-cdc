@@ -32,14 +32,6 @@ def ensure_dotfolder():
         config_folder.mkdir()
     return config_folder
 
-# def ensure_dotfolder():
-#     folder = dotfolder()
-#     print(f"Using '{folder}'.")
-#     if not folder.exists():
-#         folder.mkdir()
-#         return False
-#     return True
-
 
 def _create_db(db_folder, db_name, schema):
     # TODO support more than one schema per db
@@ -48,7 +40,8 @@ def _create_db(db_folder, db_name, schema):
     sql_path = Path(".") / "schema" / (schema + ".sql")
     sql = sql_path.read_text()
     db_path = Path(db_folder) / (db_name + ".sqlite")
-    # TODO create table nur wenn keine da ist -> nachdenken!
+    # DONE create table nur wenn keine da ist -> nein, das ist gut so
+    #   Neue Tabellen, Indizes und Views können im Fluge angelegt werden
     logging.info(f"creating DB artifacts from {sql_path}")
     con = sqlite3.connect(db_path.resolve())
     cur = con.cursor()
