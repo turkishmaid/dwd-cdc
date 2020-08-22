@@ -3,18 +3,25 @@
 -- Data source: hourly air-temperature-2m
 -- http://opendata.dwd.de/climate_environment/CDC/observations_germany/climate/hourly/air_temperature/
 -- schema version 00
+-- adding tables and indexes is supported, any alter to exiting tables is not
 -- updates will get names like hr-temp-01.sql
 
 CREATE TABLE IF NOT EXISTS readings (
     station INTEGER,
-    -- date TEXT,
+    dwdts TEXT,
     year INTEGER,
     month INTEGER,
     day INTEGER,
     hour INTEGER,
     qn9 INTEGER,
     temp REAL,
-    humid REAL
+    humid REAL,
+    PRIMARY KEY (station, dwdts)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS readings_ymdh
+ON readings (
+    station, year, month, day, hour
 );
 
 CREATE TABLE IF NOT EXISTS recent (
@@ -23,9 +30,8 @@ CREATE TABLE IF NOT EXISTS recent (
 );
 
 -- http://opendata.dwd.de/climate_environment/CDC/observations_germany/climate/hourly/air_temperature/recent/TU_Stundenwerte_Beschreibung_Stationen.txt
-
-CREATE TABLE stationen (
-    station INTEGER,
+CREATE TABLE IF NOT EXISTS stationen (
+    station INTEGER PRIMARY KEY,
     yyyymmdd_von TEXT,
     yyyymmdd_bis TEXT,
     hoehe INTEGER,

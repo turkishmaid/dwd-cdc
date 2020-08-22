@@ -5,7 +5,7 @@
 Download DWD Stundenwerte Lufttemperatur 2m.
 
 Usage:
-  hr-temp.py ( --recent | --historical | --stations )
+  hr-temp.py ( --recent | --historical | --stations | --test )
 
 Options:
   -h --help         Zeige die Bedeutung der Parameter
@@ -13,9 +13,7 @@ Options:
   --historical      Download des historischen Datenbestandes (das setzt eine
                     leere Datenbank voraus, prüft es aber nicht)
   --stations        Download der Stationsliste
-  --limit=LIMIT     Maximal so viele Stationen herunterladen (Testhilfe) [default: -1]
-  --skipdl          Dateien nicht herunterladen, wenn sie schon da sind (Testhilfe)
-  --skiprm          Dateien nach dem Einarbeiten nicht löschen (Testhilfe)
+  --test            Experimentellen oder Einmal-Code ausführen
 """
 # Created: 09.08.20
 
@@ -32,6 +30,7 @@ from tempfile import TemporaryDirectory
 import os
 from zipfile import ZipFile
 import csv
+from dataclasses import dataclass
 
 from docopt import docopt, DocoptExit, DocoptLanguageError
 
@@ -184,6 +183,7 @@ LAND_MAP = {
     "Sachsen-Anhalt" : "ST",
     "Schleswig-Holstein" : "SH",
     "Thüringen" : "TH",
+    "?" : "?"
 }
 
 def station_name(station: int, c: Connection):
@@ -206,6 +206,49 @@ def station_data_until(station: int, c: Connection):
         if row[0]:
             until = row[0]
     return until
+
+
+@dataclass
+class Station:
+    station: int
+    name: str
+    land: str
+    yyyymmdd_von: str
+    yyyymmdd_bis: str
+    recent: str
+    dwdts: str
+    readable: str
+    populated: bool = False
+
+    def __init__(self, station):
+        sql = """select 
+                name, land, yyyymmdd_von, yyyymmdd_bis, 
+                ifnull(rc.yyyymmddhh, '1700010100'),
+                ifnull(max(rd.dwdts), '1700010100') 
+            from stationen s
+            left outer join recent rc on s.station = rc.station
+            left join readings rd on s.station = rd.station
+            where s.station = ?"""
+
+        self.station = station
+        with applog.Timer() as t:
+            with Connection(f"Station.__init__({station})") as c:
+                with applog.Timer() as t:
+                    c.cur.execute(sql, (station,))
+                    row = c.cur.fetchone()
+                    if row:
+                        self.name = row[0]
+                        self.land = row[1]
+                        self.yyyymmdd_von = row[2]
+                        self.yyyymmdd_bis = row[3]
+                        self.recent = row[4] # aus Tabelle
+                        self.dwdts = row[5] # aus Daten
+                        assert self.recent == self.dwdts, f"recent: {self.recent} vs. Daten: {self.dwdts}"
+                        self.populated = True
+                        self.readable = f"{self.station}, {self.name} ({LAND_MAP[self.land]})"
+                        logging.info(f"{self.readable}: {self.yyyymmdd_von}-{self.yyyymmdd_von} {self.recent} {self.dwdts}")
+                    else:
+                        self.populated = False
 
 
 class FtpFileList:
@@ -316,12 +359,12 @@ class ProcessDataFile:
     def _get_station(self, fnam: str) -> tuple:
         """
         Bestimmt die Station aus dem Filenamen
-        :param fnam: Filename einer .zip-Datei like "stundenwerte_TU_00003_19500401_20110331_hist.zip"
+        :param fnam: Filename einer .zip-Datei like "stundenwerte_TU_00003_19500401_20110331_hist.zip" or "stundenwerte_TU_01051_akt.zip"
         :param c: Offene Connection zur Datenbank
         :return: tuple(Stationsnumer, druckbarer Name, Daten vorhanden bis)
         """
         with applog.Timer() as t:
-            station = int(fnam.split(".")[0].split("_")[2])
+            station = int(fnam.split(".")[0].split("_")[2]) # geht erfreulicherweise für hist und akt
             with Connection("get station detail") as c:
                 with applog.Timer() as t:
                     name = station_name(station, c)
@@ -383,14 +426,6 @@ class ProcessDataFile:
                     if cnt == 1:                    # skip header line
                         header = row
                         continue
-                    Y, M, D, H = ymdh(row[1])
-                    tup = (
-                        int(row[0]),  # station
-                        Y, M, D, H,  # row[1],
-                        int(row[2]),  # q
-                        None if row[3].strip() == "-999" else float(row[3]),  # temp
-                        None if row[4].strip() == "-999" else float(row[4])  # humid
-                    )
                     # surpress data that might be in DB already
                     if row[1] <= surpress_up_to:
                         continue
@@ -399,7 +434,16 @@ class ProcessDataFile:
                         logging.info(f"{skipped} Messwerte vor dem {surpress_up_to} wurden übersprungen")
                     if shown <= 1: # show first 2 rows taken
                         shown += 1
-                        logging.info(str(tup))
+                        logging.info(f"{row[0]}, {row[1]}")
+                    Y, M, D, H = ymdh(row[1])
+                    tup = (
+                        int(row[0]),  # station
+                        row[1],
+                        Y, M, D, H,  # row[1],
+                        int(row[2]),  # q
+                        None if row[3].strip() == "-999" else float(row[3]),  # temp
+                        None if row[4].strip() == "-999" else float(row[4])  # humid
+                    )
                     readings.append(tup)
         logging.info(f"{len(readings)} neue Messwerte für Station {name} gefunden {t.read()}")
         return readings
@@ -408,7 +452,7 @@ class ProcessDataFile:
         with applog.Timer() as t:
             c.cur.executemany("""
                 INSERT OR IGNORE INTO readings
-                VALUES (?, ?,?,?,?, ?, ?,?)
+                VALUES (?, ?,?,?,?,?, ?, ?,?)
             """, readings)
             # c.commit() -- commit außerhalb
         logging.info(f"{len(readings)} Zeilen in die Datenbank eingearbeitet {t.read()}")
@@ -419,8 +463,7 @@ class ProcessDataFile:
         station = readings[0][0]
         # get max time of reading from last line
         # alternatively: https://stackoverflow.com/a/4800441/3991164
-        r = readings[-1]
-        yyyymmddhh = "%04d%02d%02d%02d" % (r[1], r[2], r[3], r[4])
+        yyyymmddhh = readings[-1][1]
         with applog.Timer() as t:
             # cf. https://stackoverflow.com/a/4330694/3991164
             c.cur.execute("""
@@ -461,6 +504,8 @@ def process_dataset(kind: str) -> None:
     # for fnam in file_list[6:10]:
     for i, fnam in enumerate(file_list):
         # https://stackoverflow.com/a/7663441/3991164 - resiliance is hard to test...
+        # TODO Wenn der Fehler aufgrund Datenbank-Lock kommt, wird hier überflüssig das File nochmal runtergeladen
+        # TODO nur aufgrund eigener Daten und fnam prüfen, ob die Daten von gestern schon da sind (oder die Station eh keine Daten mehr liefert) und in diesem Fall überspringen. Gut für Retries bei Fehlern.
         for attempt in range(3):
             try:
                 ProcessDataFile(ftp, fnam, verbose=True)
@@ -468,6 +513,7 @@ def process_dataset(kind: str) -> None:
                 sleep(3)  # be nice: reduce load on server
             except TimeoutError as ex:  # will hopefully catch socket timeout
                 logging.exception("Timeout - " + ("will retry" if attempt < 2 else "no more retries"))
+                # TODO Pause über .imi File konfigurierbar machen
                 sleep(3)  # give the server a break
             except Exception as ex:  # will not catch KeyboardInterrupt :)
                 logging.exception("Exception caught - " + ("will retry" if attempt < 2 else "no more retries"))
@@ -487,7 +533,44 @@ def process_dataset(kind: str) -> None:
     logging.info("Statistik\n" + json.dumps(GLOBAL_STAT, indent=4))
 
 
+
+def is_data_expected(fnam: str) -> bool:
+    station = int(fnam.split(".")[0].split("_")[2])
+    s = Station(station)
+    assert s.populated
+    """Fälle:
+    a) Station sendet noch
+        a1) hist soll geladen werden
+        a2) akt soll geladen werden
+    b) Station beendet
+    """
+    # TODO unfertiger Code
+    if fnam.endswith("_hist.zip"):
+        bis = fnam.split(".")[0].split("_")[4] + "23"
+        return s.dwdts < bis
+    else:
+        assert fnam.endswith("__akt.zip"), fnam
+        return s.dwdts < s.yyyymmdd_bis and s.dwdts > "1701"
+
+
+def experimental():
+    EXAMPLES = {
+        # failed
+        "stundenwerte_TU_05146_20040601_20191231_hist.zip": True,
+        "stundenwerte_TU_01072_akt.zip": True,
+        # ok
+        "stundenwerte_TU_01200_20020101_20191231_hist.zip": False,
+    }
+    for e in EXAMPLES:
+        b = is_data_expected(e)
+        print(f"{e} -> {b}, expected {EXAMPLES[e]}")
+
+
+
+
+
 OPCODE = None     # enable one for interactive debugging in IDE w/o using run configurations
+# OPCODE = "test"
 # OPCODE = "recent"
 # OPCODE = "historical"
 # OPCODE = "stations"
@@ -497,7 +580,7 @@ if __name__ == "__main__":
     pc0 = perf_counter()
     pt0 = process_time()
     dotfolder.ensure_dotfolder()
-    applog.init_logging(collective=False, console=True, process=True)
+    applog.init_logging(collective=True, console=True, process=True)
     dotfolder.init_dotfolder()
     logging.info("Willkommen beim DWD.")
     try:
@@ -507,7 +590,8 @@ if __name__ == "__main__":
                 args = {
                     "--recent": OPCODE == "recent",
                     "--historical": OPCODE == "historical",
-                    "--stations": OPCODE == "stations"
+                    "--stations": OPCODE == "stations",
+                    "--test": OPCODE == "test"
                 }
                 logging.info(f"interactive debugging, OPCODE={OPCODE}")
             else:
@@ -524,6 +608,9 @@ if __name__ == "__main__":
                 process_dataset("recent")
                 # TODO nach dem Runterladen eine Kopie der Datenbank für Auswertungszwecke machen
                 # TODO bei SUCCESS nur eine kleine Statistik senden, nur bei ERROR das ganze Log
+
+            if args["--test"]:
+                experimental()
 
         except DocoptExit as ex:
             applog.ERROR = True

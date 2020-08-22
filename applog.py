@@ -39,7 +39,6 @@ def init_logging(collective: bool = False, console: bool = False, process: bool 
     :return: nothing. However, a first log message is emitted.
     """
     # TODO run this on import?
-    # TODO use https://pypi.org/project/concurrent-log-handler/ instead of RotatingFileHandler
     # DONE on/off for log handlers via parameter to support e.g. notebooks that do not do runwise logging
 
     global _ROTATING_FILE_PATH, _ROTATING_FILE_HANDLER, _STDOUT_HANDLER, _FILE_PATH, _FILE_HANDLER
@@ -58,7 +57,9 @@ def init_logging(collective: bool = False, console: bool = False, process: bool 
     if collective:
         # default.log with 10 rotating segments of 100k each -> 1 MB (reicht viele Tage)
         _ROTATING_FILE_PATH = dotfolder.dotfolder() / "default.log"
-        _ROTATING_FILE_HANDLER = RotatingFileHandler(_ROTATING_FILE_PATH, maxBytes=100_000, backupCount=10)
+        # TODO use https://pypi.org/project/concurrent-log-handler/ instead of RotatingFileHandler
+        # TODO Segmente vergrößern. DWD Tagesload macht 665k Log :)
+        _ROTATING_FILE_HANDLER = RotatingFileHandler(_ROTATING_FILE_PATH, maxBytes=1_000_000, backupCount=10)
         _ROTATING_FILE_HANDLER.setLevel(logging.INFO)
         handlers.append(_ROTATING_FILE_HANDLER)
         remark.append("collective")

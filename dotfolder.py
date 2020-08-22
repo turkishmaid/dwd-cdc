@@ -48,11 +48,12 @@ def _create_db(db_folder, db_name, schema):
     sql_path = Path(".") / "schema" / (schema + ".sql")
     sql = sql_path.read_text()
     db_path = Path(db_folder) / (db_name + ".sqlite")
-    if not db_path.exists():
-        con = sqlite3.connect(db_path.resolve())
-        cur = con.cursor()
-        cur.executescript(sql)
-        con.close()
+    # TODO create table nur wenn keine da ist -> nachdenken!
+    logging.info(f"creating DB artifacts from {sql_path}")
+    con = sqlite3.connect(db_path.resolve())
+    cur = con.cursor()
+    cur.executescript(sql)
+    con.close()
 
 
 def init_dotfolder():
