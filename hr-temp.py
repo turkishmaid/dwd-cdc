@@ -18,6 +18,7 @@ Options:
 # Created: 09.08.20
 
 # TODO Möglichkeit, die Stationen zu limitieren, etwa in Form einer übersteuerbaren Liste in der .ini-Datei
+# TODO Prüffunktion, um einen Vollständigkeitsappell für die Messwerte zu machen (Zeilen und -999)
 
 from time import perf_counter, process_time, sleep
 import json
@@ -31,6 +32,7 @@ import os
 from zipfile import ZipFile
 import csv
 from dataclasses import dataclass
+from datetime import date, timedelta
 
 from docopt import docopt, DocoptExit, DocoptLanguageError
 
@@ -79,7 +81,8 @@ class Connection:
 
     def commit(self):
         self.conn.commit()
-        # TODO sqlite3.OperationalError: database is locked
+        # DONE sqlite3.OperationalError: database is locked – der Leseversuch wird von außen wiederholt
+        # TODO Retry in die Connection-Klasse einbauen statt im Aufrufer
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.conn.close()
@@ -97,7 +100,7 @@ class ProcessStationen:
         self._download()
         self._upsert()
 
-    # TODO absichern mit try und sleep/retry, kein Programmabbruch bei Fehler
+    # DONE im aufrufer: absichern mit try und sleep/retry, kein Programmabbruch bei Fehler
     def _download(self) -> None:
         with applog.Timer() as t:
             ftp = FTP("opendata.dwd.de")
@@ -167,60 +170,39 @@ class ProcessStationen:
 
 
 LAND_MAP = {
-    "Baden-Württemberg" : "BW",
-    "Bayern" : "BY",
-    "Berlin" : "BE",
-    "Brandenburg" : "BB",
-    "Bremen" : "HB",
-    "Hamburg" : "HH",
-    "Hessen" : "HE",
-    "Mecklenburg-Vorpommern" : "MV",
-    "Niedersachsen" : "NI",
-    "Nordrhein-Westfalen" : "",
-    "Rheinland-Pfalz" : "RP",
-    "Saarland" : "SL",
-    "Sachsen" : "SN",
-    "Sachsen-Anhalt" : "ST",
-    "Schleswig-Holstein" : "SH",
-    "Thüringen" : "TH",
-    "?" : "?"
+    "Baden-Württemberg": "BW",
+    "Bayern": "BY",
+    "Berlin": "BE",
+    "Brandenburg": "BB",
+    "Bremen": "HB",
+    "Hamburg": "HH",
+    "Hessen": "HE",
+    "Mecklenburg-Vorpommern": "MV",
+    "Niedersachsen": "NI",
+    "Nordrhein-Westfalen": "",
+    "Rheinland-Pfalz": "RP",
+    "Saarland": "SL",
+    "Sachsen": "SN",
+    "Sachsen-Anhalt": "ST",
+    "Schleswig-Holstein": "SH",
+    "Thüringen": "TH",
+    "?": "?"
 }
-
-def station_name(station: int, c: Connection):
-    sql = "select name, land from stationen where station = ?"
-    c.cur.execute(sql, (station,))
-    name = "?"
-    land = "?"
-    for row in c.cur:
-        if row[0]:
-            name = row[0]
-            land = row[1]
-    return f"{station}, {name} ({LAND_MAP[land]})"
-#    return f"{station}, {name} ({land})"
-
-
-def station_data_until(station: int, c: Connection):
-    c.cur.execute("SELECT yyyymmddhh FROM recent where station = ?", (station,))
-    until = NULLDATUM
-    for row in c.cur:
-        if row[0]:
-            until = row[0]
-    return until
-
 
 @dataclass
 class Station:
     station: int
     name: str
     land: str
-    yyyymmdd_von: str
-    yyyymmdd_bis: str
-    recent: str
-    dwdts: str
-    readable: str
+    isodate_von: str
+    isodate_bis: str
+    dwdts_recent: str       # last known as in recent table
+    dwdts_readings: str     # last known as in readings table
+    description: str
     populated: bool = False
 
     def __init__(self, station):
+        # select < 0.6 millis :)
         sql = """select 
                 name, land, yyyymmdd_von, yyyymmdd_bis, 
                 ifnull(rc.yyyymmddhh, '1700010100'),
@@ -239,16 +221,44 @@ class Station:
                     if row:
                         self.name = row[0]
                         self.land = row[1]
-                        self.yyyymmdd_von = row[2]
-                        self.yyyymmdd_bis = row[3]
-                        self.recent = row[4] # aus Tabelle
-                        self.dwdts = row[5] # aus Daten
-                        assert self.recent == self.dwdts, f"recent: {self.recent} vs. Daten: {self.dwdts}"
+                        self.isodate_von = row[2]
+                        self.isodate_bis = row[3]
+                        self.dwdts_recent = row[4]  # aus Tabelle
+                        self.dwdts_readings = row[5]  # aus Daten
+                        assert self.dwdts_recent == self.dwdts_readings, \
+                            f"recent: {self.dwdts_recent} vs. Daten: {self.dwdts_readings}"
                         self.populated = True
-                        self.readable = f"{self.station}, {self.name} ({LAND_MAP[self.land]})"
-                        logging.info(f"{self.readable}: {self.yyyymmdd_von}-{self.yyyymmdd_von} {self.recent} {self.dwdts}")
+                        self.description = f"{self.station}, {self.name} ({LAND_MAP[self.land]})"
+                        logging.info(f"{self.description}: {self.isodate_von}..{self.isodate_bis} "
+                                     f"rc={self.dwdts_recent} rd={self.dwdts_readings}")
                     else:
                         self.populated = False
+
+
+def is_data_expected(fnam: str = None, s: Station = None) -> bool:
+    """
+    :param fnam: filename like stundenwerte_TU_05146_20040601_20191231_hist.zip or stundenwerte_TU_01072_akt.zip
+    :param s: (optional) Station object for the station in question, used when supplied
+    :return: True when the file is assumed to contain new values
+    """
+    station = int(fnam.split(".")[0].split("_")[2])
+    if s:
+        assert s.station == station, f"Station aus Filename: {station}, aus Objekt: {s.station}"
+    else:
+        s = Station(station)
+    assert s.populated
+    if fnam.endswith("_hist.zip"):
+        bis = fnam.split(".")[0].split("_")[4] + "23"
+        if s.dwdts_readings > "1701" and bis < "2018":
+            # es gibt bereits Werte und die Station sendet schon länger nicht mehr
+            return False
+        return s.dwdts_readings < bis
+    else:
+        assert fnam.endswith("_akt.zip"), fnam
+        # we do not have to care for time zone here, b/c DWD will typically upload yesterdays data between 9am and 10am local time
+        yester_dwdts = (date.today() + timedelta(days=-1)).strftime("%Y%m%d") + "23"
+        # Vereinfachung: Wenn Daten bis gestern schon da sind -> nix tun
+        return s.dwdts_readings < yester_dwdts
 
 
 class FtpFileList:
@@ -303,26 +313,34 @@ class ProcessDataFile:
         :param verbose: Konsolenausgabe als Fortschrittinfo -- DO NOT USE IN PRODUCTION
         """
         self._verbose = verbose
+        self.did_download = False
         logging.info(f'DataFile(_,"{fnam}")')
-        station, name, surpress_up_to = self._get_station(fnam)
-        with applog.Timer() as t:
-            with TemporaryDirectory() as temp_dir:
-                temp_dir = Path(temp_dir)
-                logging.info(f"Temporäres Verzeichnis: {temp_dir}")
-                zipfile_path = temp_dir / fnam
-                self._download(ftp, fnam, zipfile_path)
-                produkt_path = self._extract(zipfile_path, temp_dir)
-                readings = self._parse(produkt_path, name, surpress_up_to)
-                if readings:
-                    with Connection("insert readings") as c:
-                        self._insert_readings(readings, c)
-                        last_date = self._update_recent(readings, c)
-                        c.commit()  # gemeinsamer commit ist sinnvoll
-        logging.info(f"Werte für Station {station} verarbeitet {t.read()}")
 
-        if temp_dir.exists():
-            applog.ERROR = True
-            logging.error(f"Temporäres Verzeichnis {temp_dir} wurde NICHT entfernt")
+        station_nr = int(fnam.split(".")[0].split("_")[2])  # geht erfreulicherweise für hist und akt
+        self.station = Station(station_nr)
+        logging.info(f"Station {self.station.description} (Daten bis {self.station.dwdts_recent} bereits vorhanden)")
+        if is_data_expected(fnam, self.station):
+            with applog.Timer() as t:
+                with TemporaryDirectory() as temp_dir:
+                    temp_dir = Path(temp_dir)
+                    logging.info(f"Temporäres Verzeichnis: {temp_dir}")
+                    zipfile_path = temp_dir / fnam
+                    self._download(ftp, fnam, zipfile_path)
+                    produkt_path = self._extract(zipfile_path, temp_dir)
+                    readings = self._parse(produkt_path)
+                    if readings:
+                        with Connection("insert readings") as c:
+                            self._insert_readings(readings, c)
+                            last_date = self._update_recent(readings, c)
+                            c.commit()  # gemeinsamer commit ist sinnvoll
+                        logging.info(f"Werte für Station {self.station.description} bis {last_date} verarbeitet {t.read()}")
+                    else:
+                        logging.info(f"Keine Werte für Station {self.station.description} nach {self.station.dwdts_recent} gefunden {t.read()}")
+            if temp_dir.exists():
+                applog.ERROR = True
+                logging.error(f"Temporäres Verzeichnis {temp_dir} wurde NICHT entfernt")
+        else:
+            logging.info(f"File {fnam} wird nicht heruntergeladen, da keine neuen Daten zu erwarten sind.")
 
     def _download(self, ftp: FTP, from_fnam: str, to_path: Path) -> None:
         """
@@ -332,11 +350,12 @@ class ProcessDataFile:
         """
         self._cnt = 0
         self._volume = 0
-        # TODO absichern mit try und sleep/retry, kein Programmabbruch bei Fehler
+        # DONE im Aufrufer: absichern mit try und sleep/retry, kein Programmabbruch bei Fehler
         with applog.Timer() as t:
             with open(to_path, 'wb') as self.open_zip_file:
                 ftp.retrbinary("RETR " + from_fnam, self._collect)
                 # TODO TimeoutError: [Errno 60] Operation timed out
+                self.did_download = True
             if self._verbose:
                 print()  # awkward
         logging.info(f"Zipfile heruntergeladen: {self._volume:,} Bytes in {self._cnt} Blöcken {t.read()}")
@@ -355,22 +374,6 @@ class ProcessDataFile:
         tick = (self._cnt % 100 == 0)
         if self._verbose and tick:
             print(".", end="", flush=True)
-
-    def _get_station(self, fnam: str) -> tuple:
-        """
-        Bestimmt die Station aus dem Filenamen
-        :param fnam: Filename einer .zip-Datei like "stundenwerte_TU_00003_19500401_20110331_hist.zip" or "stundenwerte_TU_01051_akt.zip"
-        :param c: Offene Connection zur Datenbank
-        :return: tuple(Stationsnumer, druckbarer Name, Daten vorhanden bis)
-        """
-        with applog.Timer() as t:
-            station = int(fnam.split(".")[0].split("_")[2]) # geht erfreulicherweise für hist und akt
-            with Connection("get station detail") as c:
-                with applog.Timer() as t:
-                    name = station_name(station, c)
-                    surpress_up_to = station_data_until(station, c)
-        logging.info(f"Station {name} (Daten bis {surpress_up_to} bereits vorhanden) {t.read()}")
-        return station, name, surpress_up_to
 
     def _extract(self, zipfile_path: Path, target_path: Path) -> Path:
         """
@@ -393,13 +396,11 @@ class ProcessDataFile:
         raise ValueError(f"Kein produkt_-File in {zipfile_path}")
 
     # TODO prüfen, dass alle Werte auch von der gewünschten Station kommen
-    def _parse(self, produkt_path: Path, name: str, surpress_up_to: str) -> list:
+    def _parse(self, produkt_path: Path) -> list:
         """
-        Parsen des Datenfiles.
+        Parsen des Datenfiles. Für die Feststellung zu unterdrückender Zeilen wird self.station benutzt
         :param produkt_path: Pfad des Datenfiles
-        :param name: druckbarer Name der Station
-        :param surpress_up_to: Daten bis zu diesem Zeitpunkt sind bereits vorhanden, YYYYMMDDHH
-        :return: Stationsnummer und eine Liste von Tupeln, die in die Tabelle readings eingefügt werden können
+        :return: eine Liste von Tupeln, die in die Tabelle readings eingefügt werden können
         """
 
         def ymdh(yymmddhh: str) -> tuple:
@@ -408,11 +409,11 @@ class ProcessDataFile:
             :param yymmddhh: Stunde in DWD-Format
             :return: Tuple mit den numerischen Teilkomponenten
             """
-            Y = int(yymmddhh[:4])
-            M = int(yymmddhh[4:6])
-            D = int(yymmddhh[6:8])
-            H = int(yymmddhh[-2:])
-            return Y, M, D, H
+            y = int(yymmddhh[:4])
+            m = int(yymmddhh[4:6])
+            d = int(yymmddhh[6:8])
+            h = int(yymmddhh[-2:])
+            return y, m, d, h
 
         with applog.Timer() as t:
             readings = list()
@@ -424,28 +425,27 @@ class ProcessDataFile:
                 for row in spamreader:
                     cnt += 1
                     if cnt == 1:                    # skip header line
-                        header = row
                         continue
                     # surpress data that might be in DB already
-                    if row[1] <= surpress_up_to:
+                    if row[1] <= self.station.dwdts_recent:
                         continue
                     elif skipped == -1:  # now uncond.
                         skipped = cnt - 2  # current and first excluded
-                        logging.info(f"{skipped} Messwerte vor dem {surpress_up_to} wurden übersprungen")
-                    if shown <= 1: # show first 2 rows taken
+                        logging.info(f"{skipped} Messwerte vor dem {self.station.dwdts_recent} wurden übersprungen")
+                    if shown <= 1:  # show first 2 rows taken
                         shown += 1
                         logging.info(f"{row[0]}, {row[1]}")
-                    Y, M, D, H = ymdh(row[1])
+                    y, m, d, h = ymdh(row[1])
                     tup = (
                         int(row[0]),  # station
                         row[1],
-                        Y, M, D, H,  # row[1],
+                        y, m, d, h,  # row[1],
                         int(row[2]),  # q
                         None if row[3].strip() == "-999" else float(row[3]),  # temp
                         None if row[4].strip() == "-999" else float(row[4])  # humid
                     )
                     readings.append(tup)
-        logging.info(f"{len(readings)} neue Messwerte für Station {name} gefunden {t.read()}")
+        logging.info(f"{len(readings)} neue Messwerte für Station {self.station.description} gefunden {t.read()}")
         return readings
 
     def _insert_readings(self, readings: list, c: Connection) -> None:
@@ -505,15 +505,16 @@ def process_dataset(kind: str) -> None:
     for i, fnam in enumerate(file_list):
         # https://stackoverflow.com/a/7663441/3991164 - resiliance is hard to test...
         # TODO Wenn der Fehler aufgrund Datenbank-Lock kommt, wird hier überflüssig das File nochmal runtergeladen
-        # TODO nur aufgrund eigener Daten und fnam prüfen, ob die Daten von gestern schon da sind (oder die Station eh keine Daten mehr liefert) und in diesem Fall überspringen. Gut für Retries bei Fehlern.
+        # DONE nur aufgrund eigener Daten und fnam prüfen, ob die Daten von gestern schon da sind (oder die Station eh keine Daten mehr liefert) und in diesem Fall überspringen. Gut für Retries bei Fehlern.
         for attempt in range(3):
             try:
-                ProcessDataFile(ftp, fnam, verbose=True)
+                p = ProcessDataFile(ftp, fnam, verbose=True)
                 logging.info(f"--- {i/len(file_list)*100:.0f} %")
-                sleep(3)  # be nice: reduce load on server
+                if p.did_download:  # be nice: reduce load on server
+                    sleep(3)
             except TimeoutError as ex:  # will hopefully catch socket timeout
                 logging.exception("Timeout - " + ("will retry" if attempt < 2 else "no more retries"))
-                # TODO Pause über .imi File konfigurierbar machen
+                # TODO Pause über .ini File konfigurierbar machen
                 sleep(3)  # give the server a break
             except Exception as ex:  # will not catch KeyboardInterrupt :)
                 logging.exception("Exception caught - " + ("will retry" if attempt < 2 else "no more retries"))
@@ -533,40 +534,8 @@ def process_dataset(kind: str) -> None:
     logging.info("Statistik\n" + json.dumps(GLOBAL_STAT, indent=4))
 
 
-
-def is_data_expected(fnam: str) -> bool:
-    station = int(fnam.split(".")[0].split("_")[2])
-    s = Station(station)
-    assert s.populated
-    """Fälle:
-    a) Station sendet noch
-        a1) hist soll geladen werden
-        a2) akt soll geladen werden
-    b) Station beendet
-    """
-    # TODO unfertiger Code
-    if fnam.endswith("_hist.zip"):
-        bis = fnam.split(".")[0].split("_")[4] + "23"
-        return s.dwdts < bis
-    else:
-        assert fnam.endswith("__akt.zip"), fnam
-        return s.dwdts < s.yyyymmdd_bis and s.dwdts > "1701"
-
-
 def experimental():
-    EXAMPLES = {
-        # failed
-        "stundenwerte_TU_05146_20040601_20191231_hist.zip": True,
-        "stundenwerte_TU_01072_akt.zip": True,
-        # ok
-        "stundenwerte_TU_01200_20020101_20191231_hist.zip": False,
-    }
-    for e in EXAMPLES:
-        b = is_data_expected(e)
-        print(f"{e} -> {b}, expected {EXAMPLES[e]}")
-
-
-
+    pass
 
 
 OPCODE = None     # enable one for interactive debugging in IDE w/o using run configurations
