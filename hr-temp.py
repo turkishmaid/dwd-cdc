@@ -169,6 +169,7 @@ class ProcessStationen:
         logging.info(f"{self.cnt} Stationen in die Datenbank geschrieben {t.read()}")
 
 
+# https://www.giga.de/ratgeber/specials/abkuerzungen-der-bundeslaender-in-deutschland-tabelle/
 LAND_MAP = {
     "Baden-Württemberg": "BW",
     "Bayern": "BY",
