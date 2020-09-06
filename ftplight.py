@@ -32,6 +32,7 @@ def dwd(folder):
     logging.info(f"Connected to ftp://{SERVER}/{folder} {t.read()}")
     return ftp
 
+
 def repeat(callback, do_times: int = 3, throttle_sec: float = 3.0) -> Union[Tuple[bool, None], Tuple[bool, Any]]:
     """
     Repeat callback n times, with throttling to tame external resource access.
@@ -84,7 +85,7 @@ def ftp_nlst(ftp: FTP, station: int = None) -> list:
         collect.zips = list()
         with johanna.Timer() as t:
             rt = ftp.retrlines(f"NLST {station_match}", callback=collect)
-        logging.info(rt)      # like "226 Directory send OK."
+        logging.info(rt)  # like "226 Directory send OK."
         logging.info(f"Retrieved {len(collect.zips)} filenames {t.read()}")
         johanna.collect_stat("ftp_sec", t.read(raw=True))
         johanna.collect_stat("ftp_file_cnt", 1)
@@ -122,9 +123,10 @@ def ftp_retrbinary(ftp: FTP, from_fnam: str, to_path: Path, verbose: bool = Fals
         collect.volume = 0
         with johanna.Timer() as t:
             with open(to_path, 'wb') as collect.open_file:
-                ftp.retrbinary("RETR " + from_fnam, collect)
+                rt = ftp.retrbinary("RETR " + from_fnam, collect)
             if verbose:
                 print()  # awkward
+        logging.info(rt)
         logging.info(f"Downloaded {collect.volume:,} bytes in {collect.cnt} blocks {t.read()}")
         johanna.collect_stat("download_bytes", collect.volume)
         johanna.collect_stat("download_time", t.read(raw=True))
@@ -168,12 +170,13 @@ def ftp_retrlines(ftp: FTP, from_fnam: str, to_path: Path = None, verbose: bool 
         with johanna.Timer() as t:
             if to_path:
                 with open(to_path, 'w') as collect.open_file:
-                    ftp.retrlines("RETR " + from_fnam, collect)
+                    rt = ftp.retrlines("RETR " + from_fnam, collect)
             else:
                 collect.lines = []
-                ftp.retrlines("RETR " + from_fnam, collect)
+                rt = ftp.retrlines("RETR " + from_fnam, collect)
             if verbose:
                 print()  # awkward
+        logging.info(rt)
         logging.info(f"Downloaded {collect.volume:,} bytes in {collect.cnt} lines {t.read()}")
         johanna.collect_stat("download_bytes", collect.volume)
         johanna.collect_stat("download_time", t.read(raw=True))
