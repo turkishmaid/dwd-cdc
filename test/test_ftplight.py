@@ -71,6 +71,12 @@ def get_potsdam():
     remote = REMOTE_BASE + "/" + "historical"
     ftp = ftplight.dwd(remote)
     logging.info("-"*80)
+    fnams = ftplight.ftp_nlst(ftp)
+    logging.info(f"{len(fnams)} files")
+    for fnam in fnams[:7]:
+        logging.info(fnam)
+    logging.info("...")
+    logging.info("-"*80)
     fnams = ftplight.ftp_nlst(ftp, station=3987)
     fnam = fnams[0]
     target = ftplight.ftp_retrbinary(ftp, fnam, LOCAL/fnam, verbose=True)

@@ -10,6 +10,5 @@ Created: 25.08.20
 
 import json
 
-
 if __name__ == "__main__":
     pass
