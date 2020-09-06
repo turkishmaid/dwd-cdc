@@ -17,13 +17,11 @@ import johanna
 
 
 def get_station_match(station: int = None) -> str:
-    if station:
-        return f"*_{station:05d}_*.zip"
-    else:
-        return "*.zip"
+    return f"*_{station:05d}_*.zip" if station else "*.zip"
 
 
 def dwd(folder):
+    # TODO make this a Context Handler
     SERVER = "opendata.dwd.de"
     with johanna.Timer() as t:
         ftp = FTP(SERVER)
