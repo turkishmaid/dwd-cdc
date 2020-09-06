@@ -88,7 +88,7 @@ class ProcessStationen:
                     self.rows.append(tup)
                     self.cnt += 1
             logging.info(f"{self.cnt} Stationen gelesen und geparst {t.read()}")
-            ftp.quit()
+            ftp.quit()  # TODO quit() or close()
         logging.info(f"Verbindung zum DWD geschlossen {t.read()}")
         johanna.collect_stat("download_sec", t.read(raw=True))
         johanna.collect_stat("files_cnt", 1)
@@ -244,39 +244,6 @@ class ProcessDataFile:
         else:
             logging.info(f"File {fnam} wird nicht heruntergeladen, da keine neuen Daten zu erwarten sind.")
 
-    def _download(self, ftp: FTP, from_fnam: str, to_path: Path) -> None:
-        """
-        :param ftp: geöffnete FTP Verbindung mit dem richtigen Arbeitsverzeichnis
-        :param from_fnam: Name des herunterzuladenden Files
-        :param to_path: Speicherort lokal
-        """
-        self._cnt = 0
-        self._volume = 0
-        # DONE im Aufrufer: absichern mit try und sleep/retry, kein Programmabbruch bei Fehler
-        with johanna.Timer() as t:
-            with open(to_path, 'wb') as self.open_zip_file:
-                ftp.retrbinary("RETR " + from_fnam, self._collect)
-                # TODO TimeoutError: [Errno 60] Operation timed out
-                self.did_download = True
-            if self._verbose:
-                print()  # awkward
-        logging.info(f"Zipfile heruntergeladen: {self._volume:,} Bytes in {self._cnt} Blöcken {t.read()}")
-        johanna.collect_stat("download_bytes", self._volume)
-        johanna.collect_stat("download_time", t.read(raw=True))
-        johanna.collect_stat("files_cnt", 1)
-
-    def _collect(self, b: bytes) -> None:
-        """
-        Callback für FTP.retrbinary
-        :param b:
-        """
-        self.open_zip_file.write(b)
-        self._cnt += 1
-        self._volume += len(b)
-        tick = (self._cnt % 100 == 0)
-        if self._verbose and tick:
-            print(".", end="", flush=True)
-
     def _extract(self, zipfile_path: Path, target_path: Path) -> Path:
         """
         Die zip-Files enthalten jeweils eine Reihe von html und txt Dateien,
@@ -385,18 +352,12 @@ REMOTE_BASE = "climate_environment/CDC/observations_germany/climate/hourly/air_t
 def process_dataset(kind: str) -> None:
 
     remote = REMOTE_BASE + "/" + kind
-    with johanna.Timer() as t:
-        ftp = FTP(SERVER)
-        ftp.login()  # anonymous
-        ftp.cwd(remote)
-    logging.info(f"Connectiert an {SERVER} pwd={remote} {t.read()}")
-
+    ftp = ftplight.dwd(remote)
     file_list = ftplight.ftp_nlst(ftp)
     if not file_list:
         raise Exception("Da kann ich nix machen.")
 
     for i, fnam in enumerate(file_list):
-        # https://stackoverflow.com/a/7663441/3991164 - resiliance is hard to test...
         p = ProcessDataFile(ftp, fnam, verbose=True)
         logging.info(f"--- {i/len(file_list)*100:.0f} %")
 
