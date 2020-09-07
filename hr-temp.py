@@ -378,6 +378,9 @@ def process_dataset(kind: str) -> None:
     station_filter = johanna.get("hr-temp", "stationen", None)
     if station_filter:
         station_filter = parse_clist(station_filter)
+        logging.info(f"Nur diese Stationen herunterladen: {station_filter}")
+    else:
+        logging.info(f"Alle {len(file_list)} Stationen herunterladen.")
     # TODO use filter
 
     for i, fnam in enumerate(file_list):
@@ -401,7 +404,7 @@ def experimental():
 OPCODE = None     # enable one for interactive debugging in IDE w/o using run configurations
 # OPCODE = "test"
 # OPCODE = "recent"
-# OPCODE = "historical"
+OPCODE = "historical"
 # OPCODE = "stations"
 
 def main():
