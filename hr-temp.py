@@ -172,6 +172,23 @@ class Station:
                         self.populated = False
 
 
+def parse_clist(s: str) -> List[int]:
+    """
+    Parse commented station list
+    " 722(Brocken),5792(Zugspitze), 3987 (Potsdam)  " -> [722, 5792, 3987]
+    :param s:
+    :return:
+    """
+    stations = []
+    parts = s.split(",")
+    for part in parts:
+        if "(" in part:
+            stations.append(int(part[:part.index("(")].strip()))
+        else:
+            stations.append(int(part.strip()))
+    return stations
+
+
 def is_data_expected(fnam: str = None, s: Station = None) -> bool:
     """
     :param fnam: filename like stundenwerte_TU_05146_20040601_20191231_hist.zip or stundenwerte_TU_01072_akt.zip
@@ -222,7 +239,7 @@ class ProcessDataFile:
                 with TemporaryDirectory() as temp_dir:
                     temp_dir = Path(temp_dir)
                     logging.info(f"Temporäres Verzeichnis: {temp_dir}")
-                    zipfile_path = ftplight.ftp_retr(ftp, from_fnam=fnam, to_path=temp_dir/fnam, verbose=True)
+                    zipfile_path = ftplight.ftp_retrbinary(ftp, from_fnam=fnam, to_path=temp_dir/fnam, verbose=True)
                     if not zipfile_path:
                         johanna.flag_as_error()
                         logging.error(f"Kann die Daten der Station {self.station.description} nicht herunterladen.")
@@ -357,7 +374,14 @@ def process_dataset(kind: str) -> None:
     if not file_list:
         raise Exception("Da kann ich nix machen.")
 
+    station_filter = johanna.get("hr-temp", "stationen", None)
+    if station_filter:
+        station_filter = parse_clist(station_filter)
+    # TODO use filter
+
     for i, fnam in enumerate(file_list):
+        if i > 0:
+            sleep(2.0)  # pace down a little bit
         p = ProcessDataFile(ftp, fnam, verbose=True)
         logging.info(f"--- {i/len(file_list)*100:.0f} %")
 
