@@ -277,7 +277,7 @@ class ProcessDataFile:
         zipfile = ZipFile(zipfile_path)
         for zi in zipfile.infolist():
             if zi.filename.startswith("produkt_"):
-                produkt = zipfile.extract(zi, path=target_path)
+                produkt = zipfile.extract(zi, path=str(target_path))
                 logging.info(f"Daten in {produkt}")
                 return Path(produkt)
         raise ValueError(f"Kein produkt_-File in {zipfile_path}")
