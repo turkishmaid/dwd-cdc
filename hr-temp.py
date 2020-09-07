@@ -31,6 +31,7 @@ from zipfile import ZipFile
 import csv
 from dataclasses import dataclass
 from datetime import date, timedelta
+from typing import List
 
 from docopt import docopt
 
