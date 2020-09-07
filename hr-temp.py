@@ -404,7 +404,7 @@ def experimental():
 OPCODE = None     # enable one for interactive debugging in IDE w/o using run configurations
 # OPCODE = "test"
 # OPCODE = "recent"
-OPCODE = "historical"
+# OPCODE = "historical"
 # OPCODE = "stations"
 
 def main():
