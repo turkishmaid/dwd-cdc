@@ -141,7 +141,7 @@ class Station:
 
     def __init__(self, station):
         # select < 0.6 millis :)
-        sql = """select 
+        SQL = """select 
                 name, land, yyyymmdd_von, yyyymmdd_bis, 
                 ifnull(rc.yyyymmddhh, '1700010100'),
                 ifnull(max(rd.dwdts), '1700010100') 
@@ -154,7 +154,7 @@ class Station:
         with johanna.Timer() as t:
             with johanna.Connection(f"Station.__init__({station})") as c:
                 with johanna.Timer() as t:
-                    c.cur.execute(sql, (station,))
+                    c.cur.execute(SQL, (station,))
                     row = c.cur.fetchone()
                     if row:
                         self.name = row[0]
@@ -196,7 +196,7 @@ def is_data_expected(fnam: str = None, s: Station = None) -> bool:
     :param s: (optional) Station object for the station in question, used when supplied
     :return: True when the file is assumed to contain new values
     """
-    station = int(fnam.split(".")[0].split("_")[2])
+    station = station_from_fnam(fnam)
     if s:
         assert s.station == station, f"Station aus Filename: {station}, aus Objekt: {s.station}"
     else:
@@ -215,6 +215,10 @@ def is_data_expected(fnam: str = None, s: Station = None) -> bool:
         # Vereinfachung: Wenn Daten bis gestern schon da sind -> nix tun
         # TODO Wenn Daten bis zum Ende der Station schon da sind -> nix tun
         return s.dwdts_readings < yester_dwdts
+
+
+def station_from_fnam(fnam: str) -> int:
+    return int(fnam.split(".")[0].split("_")[2])
 
 
 NULLDATUM = "1700010100"      # Früher als alles. 1970 geht ja beim DWD nicht :)
@@ -384,8 +388,11 @@ def process_dataset(kind: str) -> None:
     # TODO use filter
 
     for i, fnam in enumerate(file_list):
-        if i > 0:
-            sleep(2.0)  # pace down a little bit
+        if station_filter:
+            station = station_from_fnam(fnam)
+            if not station in station_filter:
+                continue
+        sleep(2.0)  # pace down a little bit
         p = ProcessDataFile(ftp, fnam, verbose=True)
         logging.info(f"--- {i/len(file_list)*100:.0f} %")
 
@@ -421,10 +428,13 @@ def main():
         args = docopt(__doc__, version='Download DWD Stundenwerte Lufttemperatur 2m – v0.1')
         logging.info(json.dumps(args, indent=4))
 
+    johanna.apply_schema("schema/hr-temp-00.sql")
+
     if args["--stations"]:
         ProcessStationen()
 
     if args["--historical"]:
+        ProcessStationen()
         process_dataset("historical")
 
     if args["--recent"]:

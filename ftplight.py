@@ -24,7 +24,7 @@ def dwd(folder):
     # TODO make this a Context Handler
     SERVER = "opendata.dwd.de"
     with johanna.Timer() as t:
-        ftp = FTP(SERVER)
+        ftp = FTP(SERVER, timeout=15)
         ftp.login()  # anonymous
         ftp.cwd(folder)
     logging.info(f"Connected to ftp://{SERVER}/{folder} {t.read()}")
