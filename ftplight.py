@@ -4,6 +4,10 @@
 """
 Simple FTP interface, way tailored towards the DWD CDC FTP server.
 
+Why not https://ftputil.sschwarzer.net/trac/wiki/WikiStart
+for the various FTP accesses and https://github.com/jd/tenacity
+for repeat()? Well, why not keep it simple.
+
 Created: 06.09.20
 """
 
@@ -35,7 +39,6 @@ def repeat(callback, do_times: int = 3, throttle_sec: float = 3.0) -> Union[Tupl
     """
     Repeat callback n times, with throttling to tame external resource access.
     Utilizes https://stackoverflow.com/questions/2083987/how-to-retry-after-exception/7663441#7663441
-    Maybe we change to https://github.com/jd/tenacity later =:D
     :param callback: Function w/o parameters, may raise Exceptions or TimeoutError.
     :param do_times: Try at most that often to execute callback().
     :param throttle_sec: Wait a short time before executing callback().
