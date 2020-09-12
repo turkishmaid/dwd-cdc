@@ -22,7 +22,6 @@ Options:
 
 import json
 import os
-from time import sleep
 import logging
 from ftplib import FTP
 from pathlib import Path
@@ -392,7 +391,7 @@ def process_dataset(kind: str) -> None:
             station = station_from_fnam(fnam)
             if not station in station_filter:
                 continue
-        sleep(2.0)  # pace down a little bit
+        johanna.sleep(2.0)  # pace down a little bit
         p = ProcessDataFile(ftp, fnam, verbose=True)
         logging.info(f"--- {i/len(file_list)*100:.0f} %")
 

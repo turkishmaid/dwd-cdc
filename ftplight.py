@@ -13,7 +13,6 @@ Created: 06.09.20
 
 from ftplib import FTP
 import logging
-from time import sleep
 from typing import Union, Tuple, Any, List
 from pathlib import Path
 
@@ -61,7 +60,7 @@ def repeat(callback, do_times: int = 3, throttle_sec: float = 3.0) -> Union[Tupl
         else:  # executed when the execution falls thru the try
             break
         logging.info(f"Retrying after {throttle_sec:0.1f} sec ...")
-        sleep(throttle_sec)
+        johanna.sleep(throttle_sec)
     else:
         johanna.flag_as_error()
         logging.error(f"Finally failed.")
