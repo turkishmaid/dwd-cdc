@@ -79,7 +79,7 @@ def ftp_nlst(ftp: FTP, station: int = None) -> list:
 
     def collect(fnam: str) -> None:  # Callback for FTP.retrlines
         collect.zips.append(fnam)
-        johanna.collect_stat("ftp_bytes", len(fnam))
+        johanna.collect_stat("ftp_download_bytes_cnt", len(fnam))
 
     def download() -> list:
         collect.zips = list()
@@ -87,8 +87,8 @@ def ftp_nlst(ftp: FTP, station: int = None) -> list:
             rt = ftp.retrlines(f"NLST {station_match}", callback=collect)
         logging.info(rt)  # like "226 Directory send OK."
         logging.info(f"Retrieved {len(collect.zips)} filenames {t.read()}")
-        johanna.collect_stat("ftp_sec", t.read(raw=True))
-        johanna.collect_stat("ftp_file_cnt", 1)
+        johanna.collect_stat("ftp_download_time_sec", t.read(raw=True))
+        johanna.collect_stat("ftp_download_file_cnt", 1)
         return collect.zips
 
     station_match = get_station_match(station)
@@ -128,9 +128,9 @@ def ftp_retrbinary(ftp: FTP, from_fnam: str, to_path: Path, verbose: bool = Fals
                 print()  # awkward
         logging.info(rt)
         logging.info(f"Downloaded {collect.volume:,} bytes in {collect.cnt} blocks {t.read()}")
-        johanna.collect_stat("download_bytes", collect.volume)
-        johanna.collect_stat("download_time", t.read(raw=True))
-        johanna.collect_stat("files_cnt", 1)
+        johanna.collect_stat("ftp_download_bytes_cnt", collect.volume)
+        johanna.collect_stat("ftp_download_time_sec", t.read(raw=True))
+        johanna.collect_stat("ftp_download_file_cnt", 1)
         return to_path
 
     logging.info(f"FTP: trying to RETR {from_fnam} in BINARY mode ...")
@@ -178,9 +178,9 @@ def ftp_retrlines(ftp: FTP, from_fnam: str, to_path: Path = None, verbose: bool 
                 print()  # awkward
         logging.info(rt)
         logging.info(f"Downloaded {collect.volume:,} bytes in {collect.cnt} lines {t.read()}")
-        johanna.collect_stat("download_bytes", collect.volume)
-        johanna.collect_stat("download_time", t.read(raw=True))
-        johanna.collect_stat("files_cnt", 1)
+        johanna.collect_stat("ftp_download_bytes_cnt", collect.volume)
+        johanna.collect_stat("ftp_download_time_sec", t.read(raw=True))
+        johanna.collect_stat("ftp_download_file_cnt", 1)
         return to_path if to_path else collect.lines
 
     logging.info(f"FTP: trying to RETR {from_fnam} in TEXT mode ...")

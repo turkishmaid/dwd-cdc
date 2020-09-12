@@ -90,8 +90,6 @@ class ProcessStationen:
             logging.info(f"{self.cnt} Stationen gelesen und geparst {t.read()}")
             ftp.quit()  # TODO quit() or close()
         logging.info(f"Verbindung zum DWD geschlossen {t.read()}")
-        johanna.collect_stat("download_sec", t.read(raw=True))
-        johanna.collect_stat("files_cnt", 1)
 
     def _upsert(self):
         with johanna.Timer() as t:
@@ -346,7 +344,7 @@ class ProcessDataFile:
             """, readings)
             # c.commit() -- commit außerhalb
         logging.info(f"{len(readings)} Zeilen in die Datenbank eingearbeitet {t.read()}")
-        johanna.collect_stat("readings_inserted", len(readings))
+        johanna.collect_stat("db_readings_inserted", len(readings))
 
     def _update_recent(self, readings: list, c: johanna.Connection) -> str:
         # get station, assuming that is the same in all tuples
