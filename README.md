@@ -2,6 +2,12 @@
 
 Fool around with data from DWD Climate Data Center.
 
+### Failed Development Plan
+
+This does not work out as intended, because I am using JetBrain's PyCharm for development. So either I cannot structure my code properly, or I will have to do without PyCharm autocomplete fuctionality. So I will need to choose a structure that is supported by both Python and PyCharm. We will see what I can find out. See you later.
+
+----
+
 ## Purpose
 
 Download and update data from the DWD Climata Data Center
