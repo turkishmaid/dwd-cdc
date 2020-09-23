@@ -17,7 +17,7 @@ Options:
 """
 # Created: 09.08.20
 
-# TODO Möglichkeit, die Stationen zu limitieren, etwa in Form einer übersteuerbaren Liste in der .ini-Datei
+# DONE Möglichkeit, die Stationen zu limitieren, etwa in Form einer übersteuerbaren Liste in der .ini-Datei
 # TODO Prüffunktion, um einen Vollständigkeitsappell für die Messwerte zu machen (Zeilen und -999)
 
 import json
@@ -55,7 +55,7 @@ class ProcessStationen:
         self._download()
         self._upsert()
 
-    # DONE im aufrufer: absichern mit try und sleep/retry, kein Programmabbruch bei Fehler
+    # DONE absichern mit try und sleep/retry, kein Programmabbruch bei Fehler
     def _download(self) -> None:
         with johanna.Timer() as t:
             ftp = ftplight.dwd("climate_environment/CDC/observations_germany/climate/hourly/air_temperature/historical")
@@ -382,7 +382,7 @@ def process_dataset(kind: str) -> None:
         logging.info(f"Nur diese Stationen herunterladen: {station_filter}")
     else:
         logging.info(f"Alle {len(file_list)} Stationen herunterladen.")
-    # TODO use filter
+    # DONE use filter
 
     for i, fnam in enumerate(file_list):
         if station_filter:
